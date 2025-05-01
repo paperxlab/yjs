@@ -3,37 +3,14 @@ import * as error from 'lib0/error'
 import * as encoding from 'lib0/encoding'
 
 import {
-  ID // eslint-disable-line
+  ID, // eslint-disable-line
 } from '../internals.js'
 
-/**
- * @typedef AddRefFilter
- * @type {(ref: import("../structs/ContentBlockRef.js").ContentBlockRef) => boolean}
- */
-
-/**
- * @typedef DSEncoderOptions
- * @property {AddRefFilter} [addRefFilter]
- */
-
-/**
- * @type {AddRefFilter}
- */
-const defaultAddRefFilter = (content) => {
-  return !content._item?.deleted
-}
-
 export class DSEncoderV1 {
-  /**
-   * @param {DSEncoderOptions} [options]
-   */
-  constructor (options = {}) {
+  constructor () {
     this.restEncoder = encoding.createEncoder()
+    /** @type {Set<string>} */
     this.refBlockIds = new Set()
-    /**
-     * @type {AddRefFilter}
-     */
-    this.addRefFilter = options.addRefFilter ?? defaultAddRefFilter
   }
 
   toUint8Array () {
@@ -59,12 +36,10 @@ export class DSEncoderV1 {
   }
 
   /**
-   * @param {import("../structs/ContentBlockRef.js").ContentBlockRef} ref
+   * @param {string} blockId
    */
-  addRef (ref) {
-    if (this.addRefFilter(ref)) {
-      this.refBlockIds.add(ref.blockId)
-    }
+  addRef (blockId) {
+    this.refBlockIds.add(blockId)
   }
 }
 
@@ -160,17 +135,13 @@ export class UpdateEncoderV1 extends DSEncoderV1 {
 }
 
 export class DSEncoderV2 {
-  /**
-   * @param {DSEncoderOptions} [options]
-   */
-  constructor (options = {}) {
+  constructor () {
     this.restEncoder = encoding.createEncoder() // encodes all the rest / non-optimized
     this.dsCurrVal = 0
-    this.refBlockIds = new Set()
     /**
-     * @type {AddRefFilter}
+     * @type {Set<string>}
      */
-    this.addRefFilter = options.addRefFilter || defaultAddRefFilter
+    this.refBlockIds = new Set()
   }
 
   toUint8Array () {
@@ -202,22 +173,18 @@ export class DSEncoderV2 {
   }
 
   /**
-   * @param {import("../structs/ContentBlockRef.js").ContentBlockRef} ref
+   * @param {string} blockId
    * @return {void}
    */
-  addRef (ref) {
-    if (this.addRefFilter(ref)) {
-      this.refBlockIds.add(ref.blockId)
-    }
+  addRef (blockId) {
+    this.refBlockIds.add(blockId)
   }
 }
 
 export class UpdateEncoderV2 extends DSEncoderV2 {
-  /**
-   * @param {DSEncoderOptions} [options]
-   */
-  constructor (options = {}) {
-    super(options)
+  constructor () {
+    super()
+
     /**
      * @type {Map<string,number>}
      */

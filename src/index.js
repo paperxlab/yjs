@@ -104,6 +104,10 @@ export {
   snapshotContainsUpdate
 } from './internals.js'
 
+/**
+ * @typedef {import("./utils/NanoBlock.js").BlockType} BlockType
+ */
+
 const glo = /** @type {any} */ (typeof globalThis !== 'undefined'
   ? globalThis
   : typeof window !== 'undefined'

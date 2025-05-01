@@ -9,7 +9,7 @@ import {
   createID,
   ContentType,
   followRedone,
-  ID, Doc, AbstractType // eslint-disable-line
+  ID, NanoBlock, AbstractType // eslint-disable-line
 } from '../internals.js'
 
 import * as encoding from 'lib0/encoding'
@@ -258,13 +258,13 @@ export const decodeRelativePosition = uint8Array => readRelativePosition(decodin
 
 /**
  * @param {RelativePosition} rpos
- * @param {Doc} doc
+ * @param {NanoBlock} block
  * @return {AbsolutePosition|null}
  *
  * @function
  */
-export const createAbsolutePositionFromRelativePosition = (rpos, doc) => {
-  const store = doc.store
+export const createAbsolutePositionFromRelativePosition = (rpos, block) => {
+  const store = block.structStore
   const rightID = rpos.item
   const typeID = rpos.type
   const tname = rpos.tname
@@ -293,7 +293,7 @@ export const createAbsolutePositionFromRelativePosition = (rpos, doc) => {
     }
   } else {
     if (tname !== null) {
-      type = doc.get(tname)
+      type = block.get(tname)
     } else if (typeID !== null) {
       if (getState(store, typeID.client) <= typeID.clock) {
         // type does not exist yet

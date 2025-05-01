@@ -545,34 +545,15 @@ export const encodeStateAsUpdateV2 = (block, encodedTargetStateVector = new Uint
  * Write all the blocks referenced by the document as a map of updates that can be applied on the remote document.
  *
  * @param {NanoBlock} block
- * @param {import("./UpdateEncoder.js").AddRefFilter} addRefFilter A function to filter which references to add.
- * @return {Map<string, Uint8Array>}
+ * @return {[Uint8Array, Set<string>]}
  *
  * @function
  */
-export const encodeStateAsUpdateWithRefsV2 = (block, addRefFilter) => {
-  const updates = new Map()
-  const store = block.store
-  const stack = [block]
+export const encodeStateAsUpdateWithRefsV2 = (block) => {
+  const encoder = new UpdateEncoderV2()
+  const update = encodeStateAsUpdateV2(block, undefined, encoder)
 
-  while (stack.length > 0) {
-    const currentBlock = /** @type {NanoBlock} */(stack.pop())
-    if (updates.has(currentBlock.id)) {
-      continue
-    }
-    const encoder = new UpdateEncoderV2({ addRefFilter })
-    const update = encodeStateAsUpdateV2(currentBlock, undefined, encoder)
-    updates.set(currentBlock.id, update)
-    for (const refBlockId of encoder.refBlockIds) {
-      if (!updates.has(refBlockId)) {
-        const refBlock = store?.getBlock(refBlockId)
-        if (refBlock) {
-          stack.push(refBlock)
-        }
-      }
-    }
-  }
-  return updates
+  return [update, encoder.refBlockIds]
 }
 
 /**
