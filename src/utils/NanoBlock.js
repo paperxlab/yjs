@@ -116,6 +116,17 @@ export class NanoBlock extends Observable {
      * @private
      */
     this._rootBlock = null
+
+    /**
+     * @type {boolean}
+     */
+    this.isLoaded = false
+
+    const loadHandler = () => {
+      this.isLoaded = true
+      this.off('load', loadHandler)
+    }
+    this.on('load', loadHandler)
   }
 
   /**
