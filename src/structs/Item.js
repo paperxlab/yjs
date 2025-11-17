@@ -23,7 +23,9 @@ import {
   readContentType,
   addChangedTypeToTransaction,
   isDeleted,
-  StackItem, DeleteSet, UpdateDecoderV1, UpdateDecoderV2, UpdateEncoderV1, UpdateEncoderV2, ContentType, ContentDeleted, StructStore, ID, AbstractType, Transaction // eslint-disable-line
+  StackItem, DeleteSet, UpdateDecoderV1, UpdateDecoderV2, UpdateEncoderV1, UpdateEncoderV2, ContentType, ContentDeleted, StructStore, ID, AbstractType, Transaction, NanoBlock, // eslint-disable-line
+  readContentBlockRef,
+  readContentBlockUnRef
 } from '../internals.js'
 
 import * as error from 'lib0/error'
@@ -142,9 +144,9 @@ const isDeletedByUndoStack = (stack, id) => array.some(stack, /** @param {StackI
  * @private
  */
 export const redoItem = (transaction, item, redoitems, itemsToDelete, ignoreRemoteMapChanges, um) => {
-  const doc = transaction.doc
-  const store = doc.store
-  const ownClientID = doc.clientID
+  const block = transaction.block
+  const structStore = block.structStore
+  const ownClientID = block.clientID
   const redone = item.redone
   if (redone !== null) {
     return getItemCleanStart(transaction, redone)
@@ -225,7 +227,7 @@ export const redoItem = (transaction, item, redoitems, itemsToDelete, ignoreRemo
       left = parentType._map.get(item.parentSub) || null
     }
   }
-  const nextClock = getState(store, ownClientID)
+  const nextClock = getState(structStore, ownClientID)
   const nextId = createID(ownClientID, nextClock)
   const redoneItem = new Item(
     nextId,
@@ -418,7 +420,7 @@ export class Item extends AbstractStruct {
   integrate (transaction, offset) {
     if (offset > 0) {
       this.id.clock += offset
-      this.left = getItemCleanEnd(transaction, transaction.doc.store, createID(this.id.client, this.id.clock - 1))
+      this.left = getItemCleanEnd(transaction, transaction.block.structStore, createID(this.id.client, this.id.clock - 1))
       this.origin = this.left.lastId
       this.content = this.content.splice(offset)
       this.length -= offset
@@ -472,9 +474,9 @@ export class Item extends AbstractStruct {
               // Since this is to the left of o, we can break here
               break
             } // else, o might be integrated before an item that this conflicts with. If so, we will find it in the next iterations
-          } else if (o.origin !== null && itemsBeforeOrigin.has(getItem(transaction.doc.store, o.origin))) { // use getItem instead of getItemCleanEnd because we don't want / need to split items.
+          } else if (o.origin !== null && itemsBeforeOrigin.has(getItem(transaction.block.structStore, o.origin))) { // use getItem instead of getItemCleanEnd because we don't want / need to split items.
             // case 2
-            if (!conflictingItems.has(getItem(transaction.doc.store, o.origin))) {
+            if (!conflictingItems.has(getItem(transaction.block.structStore, o.origin))) {
               left = o
               conflictingItems.clear()
             }
@@ -517,7 +519,7 @@ export class Item extends AbstractStruct {
       if (this.parentSub === null && this.countable && !this.deleted) {
         /** @type {AbstractType<any>} */ (this.parent)._length += this.length
       }
-      addStruct(transaction.doc.store, this)
+      addStruct(transaction.block.structStore, this)
       this.content.integrate(transaction, this)
       // add parent to transaction.changed
       addChangedTypeToTransaction(transaction, /** @type {AbstractType<any>} */ (this.parent), this.parentSub)
@@ -695,6 +697,27 @@ export class Item extends AbstractStruct {
     }
     this.content.write(encoder, offset)
   }
+
+  /**
+  * @returns {NanoBlock | null}
+  */
+  get block () {
+    let item = /** @type {Item | null} */(this)
+    while (item) {
+      if (
+        item.parent &&
+        item.parent instanceof AbstractType
+      ) {
+        if (item.parent.block) {
+          return item.parent.block
+        }
+        item = item.parent._item
+      } else {
+        return null
+      }
+    }
+    return null
+  }
 }
 
 /**
@@ -719,7 +742,9 @@ export const contentRefs = [
   readContentType, // 7
   readContentAny, // 8
   readContentDoc, // 9
-  () => { error.unexpectedCase() } // 10 - Skip is not ItemContent
+  () => { error.unexpectedCase() }, // 10 - Skip is not ItemContent
+  readContentBlockRef, // 11
+  readContentBlockUnRef // 12
 ]
 
 /**

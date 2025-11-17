@@ -14,7 +14,7 @@ import {
   YMapRefID,
   callTypeObservers,
   transact,
-  UpdateDecoderV1, UpdateDecoderV2, UpdateEncoderV1, UpdateEncoderV2, Doc, Transaction, Item // eslint-disable-line
+  UpdateDecoderV1, UpdateDecoderV2, UpdateEncoderV1, UpdateEncoderV2, Transaction, Item, NanoBlock // eslint-disable-line
 } from '../internals.js'
 
 import * as iterator from 'lib0/iterator'
@@ -70,11 +70,11 @@ export class YMap extends AbstractType {
    * * This type is sent to other client
    * * Observer functions are fired
    *
-   * @param {Doc} y The Yjs instance
+   * @param {NanoBlock} block The Yjs instance
    * @param {Item} item
    */
-  _integrate (y, item) {
-    super._integrate(y, item)
+  _integrate (block, item) {
+    super._integrate(block, item)
     ;/** @type {Map<string, any>} */ (this._prelimContent).forEach((value, key) => {
       this.set(key, value)
     })
@@ -195,8 +195,8 @@ export class YMap extends AbstractType {
    * @param {string} key The key of the element to remove.
    */
   delete (key) {
-    if (this.doc !== null) {
-      transact(this.doc, transaction => {
+    if (this.block !== null) {
+      transact(this.block, transaction => {
         typeMapDelete(transaction, this, key)
       })
     } else {
@@ -213,8 +213,8 @@ export class YMap extends AbstractType {
    * @return {VAL}
    */
   set (key, value) {
-    if (this.doc !== null) {
-      transact(this.doc, transaction => {
+    if (this.block !== null) {
+      transact(this.block, transaction => {
         typeMapSet(transaction, this, key, /** @type {any} */ (value))
       })
     } else {
@@ -247,8 +247,8 @@ export class YMap extends AbstractType {
    * Removes all elements from this YMap.
    */
   clear () {
-    if (this.doc !== null) {
-      transact(this.doc, transaction => {
+    if (this.block !== null) {
+      transact(this.block, transaction => {
         this.forEach(function (_value, key, map) {
           typeMapDelete(transaction, map, key)
         })

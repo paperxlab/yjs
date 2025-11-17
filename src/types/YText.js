@@ -27,7 +27,7 @@ import {
   typeMapGetAll,
   updateMarkerChanges,
   ContentType,
-  ArraySearchMarker, UpdateDecoderV1, UpdateDecoderV2, UpdateEncoderV1, UpdateEncoderV2, ID, Doc, Item, Snapshot, Transaction // eslint-disable-line
+  ArraySearchMarker, UpdateDecoderV1, UpdateDecoderV2, UpdateEncoderV1, UpdateEncoderV2, ID, Item, Snapshot, Transaction, NanoBlock // eslint-disable-line
 } from '../internals.js'
 
 import * as object from 'lib0/object'
@@ -161,12 +161,12 @@ const insertNegatedAttributes = (transaction, parent, currPos, negatedAttributes
     }
     currPos.forward()
   }
-  const doc = transaction.doc
-  const ownClientId = doc.clientID
+  const block = transaction.block
+  const ownClientId = block.clientID
   negatedAttributes.forEach((val, key) => {
     const left = currPos.left
     const right = currPos.right
-    const nextFormat = new Item(createID(ownClientId, getState(doc.store, ownClientId)), left, left && left.lastId, right, right && right.id, parent, null, new ContentFormat(key, val))
+    const nextFormat = new Item(createID(ownClientId, getState(block.structStore, ownClientId)), left, left && left.lastId, right, right && right.id, parent, null, new ContentFormat(key, val))
     nextFormat.integrate(transaction, 0)
     currPos.right = nextFormat
     currPos.forward()
@@ -221,8 +221,8 @@ const minimizeAttributeChanges = (currPos, attributes) => {
  * @function
  **/
 const insertAttributes = (transaction, parent, currPos, attributes) => {
-  const doc = transaction.doc
-  const ownClientId = doc.clientID
+  const block = transaction.block
+  const ownClientId = block.clientID
   const negatedAttributes = new Map()
   // insert format-start items
   for (const key in attributes) {
@@ -232,7 +232,7 @@ const insertAttributes = (transaction, parent, currPos, attributes) => {
       // save negated attribute (set null if currentVal undefined)
       negatedAttributes.set(key, currentVal)
       const { left, right } = currPos
-      currPos.right = new Item(createID(ownClientId, getState(doc.store, ownClientId)), left, left && left.lastId, right, right && right.id, parent, null, new ContentFormat(key, val))
+      currPos.right = new Item(createID(ownClientId, getState(block.structStore, ownClientId)), left, left && left.lastId, right, right && right.id, parent, null, new ContentFormat(key, val))
       currPos.right.integrate(transaction, 0)
       currPos.forward()
     }
@@ -256,8 +256,8 @@ const insertText = (transaction, parent, currPos, text, attributes) => {
       attributes[key] = null
     }
   })
-  const doc = transaction.doc
-  const ownClientId = doc.clientID
+  const block = transaction.block
+  const ownClientId = block.clientID
   minimizeAttributeChanges(currPos, attributes)
   const negatedAttributes = insertAttributes(transaction, parent, currPos, attributes)
   // insert content
@@ -266,7 +266,7 @@ const insertText = (transaction, parent, currPos, text, attributes) => {
   if (parent._searchMarker) {
     updateMarkerChanges(parent._searchMarker, currPos.index, content.getLength())
   }
-  right = new Item(createID(ownClientId, getState(doc.store, ownClientId)), left, left && left.lastId, right, right && right.id, parent, null, content)
+  right = new Item(createID(ownClientId, getState(block.structStore, ownClientId)), left, left && left.lastId, right, right && right.id, parent, null, content)
   right.integrate(transaction, 0)
   currPos.right = right
   currPos.index = index
@@ -285,8 +285,8 @@ const insertText = (transaction, parent, currPos, text, attributes) => {
  * @function
  */
 const formatText = (transaction, parent, currPos, length, attributes) => {
-  const doc = transaction.doc
-  const ownClientId = doc.clientID
+  const block = transaction.block
+  const ownClientId = block.clientID
   minimizeAttributeChanges(currPos, attributes)
   const negatedAttributes = insertAttributes(transaction, parent, currPos, attributes)
   // iterate until first non-format or null is found
@@ -342,7 +342,7 @@ const formatText = (transaction, parent, currPos, length, attributes) => {
     for (; length > 0; length--) {
       newlines += '\n'
     }
-    currPos.right = new Item(createID(ownClientId, getState(doc.store, ownClientId)), currPos.left, currPos.left && currPos.left.lastId, currPos.right, currPos.right && currPos.right.id, parent, null, new ContentString(newlines))
+    currPos.right = new Item(createID(ownClientId, getState(block.structStore, ownClientId)), currPos.left, currPos.left && currPos.left.lastId, currPos.right, currPos.right && currPos.right.id, parent, null, new ContentString(newlines))
     currPos.right.integrate(transaction, 0)
     currPos.forward()
   }
@@ -452,7 +452,7 @@ const cleanupContextlessFormattingGap = (transaction, item) => {
  */
 export const cleanupYTextFormatting = type => {
   let res = 0
-  transact(/** @type {Doc} */ (type.doc), transaction => {
+  transact(/** @type {NanoBlock} */ (type.block), transaction => {
     let start = /** @type {Item} */ (type._start)
     let end = type._start
     let startAttributes = map.create()
@@ -488,13 +488,13 @@ export const cleanupYTextAfterTransaction = transaction => {
    */
   const needFullCleanup = new Set()
   // check if another formatting item was inserted
-  const doc = transaction.doc
+  const block = transaction.block
   for (const [client, afterClock] of transaction.afterState.entries()) {
     const clock = transaction.beforeState.get(client) || 0
     if (afterClock === clock) {
       continue
     }
-    iterateStructs(transaction, /** @type {Array<Item|GC>} */ (doc.store.clients.get(client)), clock, afterClock, item => {
+    iterateStructs(transaction, /** @type {Array<Item|GC>} */ (block.structStore.clients.get(client)), clock, afterClock, item => {
       if (
         !item.deleted && /** @type {Item} */ (item).content.constructor === ContentFormat && item.constructor !== GC
       ) {
@@ -503,7 +503,7 @@ export const cleanupYTextAfterTransaction = transaction => {
     })
   }
   // cleanup in a new transaction
-  transact(doc, (t) => {
+  transact(block, (t) => {
     iterateDeletedStructs(transaction, transaction.deleteSet, item => {
       if (item instanceof GC || !(/** @type {YText} */ (item.parent)._hasFormatting) || needFullCleanup.has(/** @type {YText} */ (item.parent))) {
         return
@@ -653,12 +653,12 @@ export class YTextEvent extends YEvent {
    */
   get delta () {
     if (this._delta === null) {
-      const y = /** @type {Doc} */ (this.target.doc)
+      const block = /** @type {NanoBlock} */ (this.target.block)
       /**
        * @type {Array<{insert?:string|object|AbstractType<any>, delete?:number, retain?:number, attributes?: Object<string,any>}>}
        */
       const delta = []
-      transact(y, transaction => {
+      transact(block, transaction => {
         const currentAttributes = new Map() // saves all current attributes for insert
         const oldAttributes = new Map()
         let item = this.target._start
@@ -879,11 +879,11 @@ export class YText extends AbstractType {
   }
 
   /**
-   * @param {Doc} y
+   * @param {NanoBlock} block
    * @param {Item} item
    */
-  _integrate (y, item) {
-    super._integrate(y, item)
+  _integrate (block, item) {
+    super._integrate(block, item)
     try {
       /** @type {Array<function>} */ (this._pending).forEach(f => f())
     } catch (e) {
@@ -962,8 +962,8 @@ export class YText extends AbstractType {
    * @public
    */
   applyDelta (delta, { sanitize = true } = {}) {
-    if (this.doc !== null) {
-      transact(this.doc, transaction => {
+    if (this.block !== null) {
+      transact(this.block, transaction => {
         const currPos = new ItemTextListPosition(null, this._start, 0, new Map())
         for (let i = 0; i < delta.length; i++) {
           const op = delta[i]
@@ -1005,7 +1005,7 @@ export class YText extends AbstractType {
      */
     const ops = []
     const currentAttributes = new Map()
-    const doc = /** @type {Doc} */ (this.doc)
+    const block = /** @type {NanoBlock} */ (this.block)
     let str = ''
     let n = this._start
     function packStr () {
@@ -1088,7 +1088,7 @@ export class YText extends AbstractType {
     if (snapshot || prevSnapshot) {
       // snapshots are merged again after the transaction, so we need to keep the
       // transaction alive until we are done
-      transact(doc, transaction => {
+      transact(block, transaction => {
         if (snapshot) {
           splitSnapshotAffectedStructs(transaction, snapshot)
         }
@@ -1117,9 +1117,9 @@ export class YText extends AbstractType {
     if (text.length <= 0) {
       return
     }
-    const y = this.doc
-    if (y !== null) {
-      transact(y, transaction => {
+    const block = this.block
+    if (block !== null) {
+      transact(block, transaction => {
         const pos = findPosition(transaction, this, index)
         if (!attributes) {
           attributes = {}
@@ -1144,9 +1144,9 @@ export class YText extends AbstractType {
    * @public
    */
   insertEmbed (index, embed, attributes = {}) {
-    const y = this.doc
-    if (y !== null) {
-      transact(y, transaction => {
+    const block = this.block
+    if (block !== null) {
+      transact(block, transaction => {
         const pos = findPosition(transaction, this, index)
         insertText(transaction, this, pos, embed, attributes)
       })
@@ -1167,9 +1167,9 @@ export class YText extends AbstractType {
     if (length === 0) {
       return
     }
-    const y = this.doc
-    if (y !== null) {
-      transact(y, transaction => {
+    const block = this.block
+    if (block !== null) {
+      transact(block, transaction => {
         deleteText(transaction, findPosition(transaction, this, index), length)
       })
     } else {
@@ -1191,9 +1191,9 @@ export class YText extends AbstractType {
     if (length === 0) {
       return
     }
-    const y = this.doc
-    if (y !== null) {
-      transact(y, transaction => {
+    const block = this.block
+    if (block !== null) {
+      transact(block, transaction => {
         const pos = findPosition(transaction, this, index)
         if (pos.right === null) {
           return
@@ -1215,8 +1215,8 @@ export class YText extends AbstractType {
    * @public
    */
   removeAttribute (attributeName) {
-    if (this.doc !== null) {
-      transact(this.doc, transaction => {
+    if (this.block !== null) {
+      transact(this.block, transaction => {
         typeMapDelete(transaction, this, attributeName)
       })
     } else {
@@ -1235,8 +1235,8 @@ export class YText extends AbstractType {
    * @public
    */
   setAttribute (attributeName, attributeValue) {
-    if (this.doc !== null) {
-      transact(this.doc, transaction => {
+    if (this.block !== null) {
+      transact(this.block, transaction => {
         typeMapSet(transaction, this, attributeName, attributeValue)
       })
     } else {

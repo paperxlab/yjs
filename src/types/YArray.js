@@ -16,7 +16,7 @@ import {
   YArrayRefID,
   callTypeObservers,
   transact,
-  ArraySearchMarker, UpdateDecoderV1, UpdateDecoderV2, UpdateEncoderV1, UpdateEncoderV2, Doc, Transaction, Item // eslint-disable-line
+  ArraySearchMarker, UpdateDecoderV1, UpdateDecoderV2, UpdateEncoderV1, UpdateEncoderV2, Transaction, Item, NanoBlock, // eslint-disable-line
 } from '../internals.js'
 import { typeListSlice } from './AbstractType.js'
 
@@ -78,11 +78,11 @@ export class YArray extends AbstractType {
    * * This type is sent to other client
    * * Observer functions are fired
    *
-   * @param {Doc} y The Yjs instance
+   * @param {NanoBlock} block The Yjs instance
    * @param {Item} item
    */
-  _integrate (y, item) {
-    super._integrate(y, item)
+  _integrate (block, item) {
+    super._integrate(block, item)
     this.insert(0, /** @type {Array<any>} */ (this._prelimContent))
     this._prelimContent = null
   }
@@ -140,8 +140,8 @@ export class YArray extends AbstractType {
    * @param {Array<T>} content The array of content
    */
   insert (index, content) {
-    if (this.doc !== null) {
-      transact(this.doc, transaction => {
+    if (this.block !== null) {
+      transact(this.block, transaction => {
         typeListInsertGenerics(transaction, this, index, /** @type {any} */ (content))
       })
     } else {
@@ -157,8 +157,8 @@ export class YArray extends AbstractType {
    * @todo Use the following implementation in all types.
    */
   push (content) {
-    if (this.doc !== null) {
-      transact(this.doc, transaction => {
+    if (this.block !== null) {
+      transact(this.block, transaction => {
         typeListPushGenerics(transaction, this, /** @type {any} */ (content))
       })
     } else {
@@ -182,8 +182,8 @@ export class YArray extends AbstractType {
    * @param {number} length The number of elements to remove. Defaults to 1.
    */
   delete (index, length = 1) {
-    if (this.doc !== null) {
-      transact(this.doc, transaction => {
+    if (this.block !== null) {
+      transact(this.block, transaction => {
         typeListDelete(transaction, this, index, length)
       })
     } else {

@@ -17,5 +17,5 @@
       "yjs": ["./src/index.js"]
     }
   },
-  "include": ["./src/**/*.js", "./tests/**/*.js"]
+  "include": ["./src/**/*.js", "./tests/index.js"]
 }

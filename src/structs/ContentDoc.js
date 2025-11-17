@@ -93,21 +93,21 @@ export class ContentDoc {
   integrate (transaction, item) {
     // this needs to be reflected in doc.destroy as well
     this.doc._item = item
-    transaction.subdocsAdded.add(this.doc)
-    if (this.doc.shouldLoad) {
-      transaction.subdocsLoaded.add(this.doc)
-    }
+  //   transaction.subdocsAdded.add(this.doc)
+  //   if (this.doc.shouldLoad) {
+  //     transaction.subdocsLoaded.add(this.doc)
+  //   }
   }
 
   /**
    * @param {Transaction} transaction
    */
   delete (transaction) {
-    if (transaction.subdocsAdded.has(this.doc)) {
-      transaction.subdocsAdded.delete(this.doc)
-    } else {
-      transaction.subdocsRemoved.add(this.doc)
-    }
+    // if (transaction.subdocsAdded.has(this.doc)) {
+    //   transaction.subdocsAdded.delete(this.doc)
+    // } else {
+    //   transaction.subdocsRemoved.add(this.doc)
+    // }
   }
 
   /**

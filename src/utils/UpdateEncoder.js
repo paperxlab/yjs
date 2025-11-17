@@ -3,12 +3,14 @@ import * as error from 'lib0/error'
 import * as encoding from 'lib0/encoding'
 
 import {
-  ID // eslint-disable-line
+  ID, // eslint-disable-line
 } from '../internals.js'
 
 export class DSEncoderV1 {
   constructor () {
     this.restEncoder = encoding.createEncoder()
+    /** @type {Set<string>} */
+    this.refBlockIds = new Set()
   }
 
   toUint8Array () {
@@ -31,6 +33,13 @@ export class DSEncoderV1 {
    */
   writeDsLen (len) {
     encoding.writeVarUint(this.restEncoder, len)
+  }
+
+  /**
+   * @param {string} blockId
+   */
+  addRef (blockId) {
+    this.refBlockIds.add(blockId)
   }
 }
 
@@ -129,6 +138,10 @@ export class DSEncoderV2 {
   constructor () {
     this.restEncoder = encoding.createEncoder() // encodes all the rest / non-optimized
     this.dsCurrVal = 0
+    /**
+     * @type {Set<string>}
+     */
+    this.refBlockIds = new Set()
   }
 
   toUint8Array () {
@@ -158,11 +171,20 @@ export class DSEncoderV2 {
     encoding.writeVarUint(this.restEncoder, len - 1)
     this.dsCurrVal += len
   }
+
+  /**
+   * @param {string} blockId
+   * @return {void}
+   */
+  addRef (blockId) {
+    this.refBlockIds.add(blockId)
+  }
 }
 
 export class UpdateEncoderV2 extends DSEncoderV2 {
   constructor () {
     super()
+
     /**
      * @type {Map<string,number>}
      */

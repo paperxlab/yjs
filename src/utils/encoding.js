@@ -37,7 +37,7 @@ import {
   Skip,
   diffUpdateV2,
   convertUpdateFormatV2ToV1,
-  DSDecoderV2, Doc, Transaction, GC, Item, StructStore // eslint-disable-line
+  DSDecoderV2, Transaction, GC, Item, StructStore, NanoBlock // eslint-disable-line
 } from '../internals.js'
 
 import * as encoding from 'lib0/encoding'
@@ -98,19 +98,19 @@ export const writeClientsStructs = (encoder, store, _sm) => {
   // Write items with higher client ids first
   // This heavily improves the conflict algorithm.
   array.from(sm.entries()).sort((a, b) => b[0] - a[0]).forEach(([client, clock]) => {
-    writeStructs(encoder, /** @type {Array<GC|Item>} */ (store.clients.get(client)), client, clock)
+    writeStructs(encoder, /** @type {Array<GC|Item>} */(store.clients.get(client)), client, clock)
   })
 }
 
 /**
  * @param {UpdateDecoderV1 | UpdateDecoderV2} decoder The decoder object to read data from.
- * @param {Doc} doc
+ * @param {NanoBlock} block
  * @return {Map<number, { i: number, refs: Array<Item | GC> }>}
  *
  * @private
  * @function
  */
-export const readClientsStructRefs = (decoder, doc) => {
+export const readClientsStructRefs = (decoder, block) => {
   /**
    * @type {Map<number, { i: number, refs: Array<Item | GC> }>}
    */
@@ -159,7 +159,7 @@ export const readClientsStructRefs = (decoder, doc) => {
             (info & binary.BIT8) === binary.BIT8 ? decoder.readLeftID() : null, // origin
             null, // right
             (info & binary.BIT7) === binary.BIT7 ? decoder.readRightID() : null, // right origin
-            cantCopyParentInfo ? (decoder.readParentInfo() ? doc.get(decoder.readString()) : decoder.readLeftID()) : null, // parent
+            cantCopyParentInfo ? (decoder.readParentInfo() ? block.get(decoder.readString()) : decoder.readLeftID()) : null, // parent
             cantCopyParentInfo && (info & binary.BIT6) === binary.BIT6 ? decoder.readString() : null, // parentSub
             readItemContent(decoder, info) // item content
           )
@@ -317,10 +317,10 @@ const integrateStructs = (transaction, store, clientsStructRefs) => {
           /**
            * @type {{ refs: Array<GC|Item>, i: number }}
            */
-          const structRefs = clientsStructRefs.get(/** @type {number} */ (missing)) || { refs: [], i: 0 }
+          const structRefs = clientsStructRefs.get(/** @type {number} */(missing)) || { refs: [], i: 0 }
           if (structRefs.refs.length === structRefs.i) {
             // This update message causally depends on another update message that doesn't exist yet
-            updateMissingSv(/** @type {number} */ (missing), getState(store, missing))
+            updateMissingSv(/** @type {number} */(missing), getState(store, missing))
             addStackToRestSS()
           } else {
             stackHead = structRefs.refs[structRefs.i++]
@@ -366,7 +366,7 @@ const integrateStructs = (transaction, store, clientsStructRefs) => {
  * @private
  * @function
  */
-export const writeStructsFromTransaction = (encoder, transaction) => writeClientsStructs(encoder, transaction.doc.store, transaction.beforeState)
+export const writeStructsFromTransaction = (encoder, transaction) => writeClientsStructs(encoder, transaction.block.structStore, transaction.beforeState)
 
 /**
  * Read and apply a document update.
@@ -374,31 +374,31 @@ export const writeStructsFromTransaction = (encoder, transaction) => writeClient
  * This function has the same effect as `applyUpdate` but accepts an decoder.
  *
  * @param {decoding.Decoder} decoder
- * @param {Doc} ydoc
+ * @param {NanoBlock} block
  * @param {any} [transactionOrigin] This will be stored on `transaction.origin` and `.on('update', (update, origin))`
  * @param {UpdateDecoderV1 | UpdateDecoderV2} [structDecoder]
  *
  * @function
  */
-export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = new UpdateDecoderV2(decoder)) =>
-  transact(ydoc, transaction => {
+export const readUpdateV2 = (decoder, block, transactionOrigin, structDecoder = new UpdateDecoderV2(decoder)) =>
+  transact(block, transaction => {
     // force that transaction.local is set to non-local
     transaction.local = false
     let retry = false
-    const doc = transaction.doc
-    const store = doc.store
+    const block = transaction.block
+    const structStore = block.structStore
     // let start = performance.now()
-    const ss = readClientsStructRefs(structDecoder, doc)
+    const ss = readClientsStructRefs(structDecoder, block)
     // console.log('time to read structs: ', performance.now() - start) // @todo remove
     // start = performance.now()
     // console.log('time to merge: ', performance.now() - start) // @todo remove
     // start = performance.now()
-    const restStructs = integrateStructs(transaction, store, ss)
-    const pending = store.pendingStructs
+    const restStructs = integrateStructs(transaction, structStore, ss)
+    const pending = structStore.pendingStructs
     if (pending) {
       // check if we can apply something
       for (const [client, clock] of pending.missing) {
-        if (clock < getState(store, client)) {
+        if (clock < getState(structStore, client)) {
           retry = true
           break
         }
@@ -414,28 +414,28 @@ export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = n
         pending.update = mergeUpdatesV2([pending.update, restStructs.update])
       }
     } else {
-      store.pendingStructs = restStructs
+      structStore.pendingStructs = restStructs
     }
     // console.log('time to integrate: ', performance.now() - start) // @todo remove
     // start = performance.now()
-    const dsRest = readAndApplyDeleteSet(structDecoder, transaction, store)
-    if (store.pendingDs) {
+    const dsRest = readAndApplyDeleteSet(structDecoder, transaction, structStore)
+    if (structStore.pendingDs) {
       // @todo we could make a lower-bound state-vector check as we do above
-      const pendingDSUpdate = new UpdateDecoderV2(decoding.createDecoder(store.pendingDs))
+      const pendingDSUpdate = new UpdateDecoderV2(decoding.createDecoder(structStore.pendingDs))
       decoding.readVarUint(pendingDSUpdate.restDecoder) // read 0 structs, because we only encode deletes in pendingdsupdate
-      const dsRest2 = readAndApplyDeleteSet(pendingDSUpdate, transaction, store)
+      const dsRest2 = readAndApplyDeleteSet(pendingDSUpdate, transaction, structStore)
       if (dsRest && dsRest2) {
         // case 1: ds1 != null && ds2 != null
-        store.pendingDs = mergeUpdatesV2([dsRest, dsRest2])
+        structStore.pendingDs = mergeUpdatesV2([dsRest, dsRest2])
       } else {
         // case 2: ds1 != null
         // case 3: ds2 != null
         // case 4: ds1 == null && ds2 == null
-        store.pendingDs = dsRest || dsRest2
+        structStore.pendingDs = dsRest || dsRest2
       }
     } else {
       // Either dsRest == null && pendingDs == null OR dsRest != null
-      store.pendingDs = dsRest
+      structStore.pendingDs = dsRest
     }
     // console.log('time to cleanup: ', performance.now() - start) // @todo remove
     // start = performance.now()
@@ -443,9 +443,9 @@ export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = n
     // console.log('time to resume delete readers: ', performance.now() - start) // @todo remove
     // start = performance.now()
     if (retry) {
-      const update = /** @type {{update: Uint8Array}} */ (store.pendingStructs).update
-      store.pendingStructs = null
-      applyUpdateV2(transaction.doc, update)
+      const update = /** @type {{update: Uint8Array}} */ (structStore.pendingStructs).update
+      structStore.pendingStructs = null
+      applyUpdateV2(transaction.block, update)
     }
   }, transactionOrigin, false)
 
@@ -455,28 +455,28 @@ export const readUpdateV2 = (decoder, ydoc, transactionOrigin, structDecoder = n
  * This function has the same effect as `applyUpdate` but accepts an decoder.
  *
  * @param {decoding.Decoder} decoder
- * @param {Doc} ydoc
+ * @param {NanoBlock} block
  * @param {any} [transactionOrigin] This will be stored on `transaction.origin` and `.on('update', (update, origin))`
  *
  * @function
  */
-export const readUpdate = (decoder, ydoc, transactionOrigin) => readUpdateV2(decoder, ydoc, transactionOrigin, new UpdateDecoderV1(decoder))
+export const readUpdate = (decoder, block, transactionOrigin) => readUpdateV2(decoder, block, transactionOrigin, new UpdateDecoderV1(decoder))
 
 /**
  * Apply a document update created by, for example, `y.on('update', update => ..)` or `update = encodeStateAsUpdate()`.
  *
  * This function has the same effect as `readUpdate` but accepts an Uint8Array instead of a Decoder.
  *
- * @param {Doc} ydoc
+ * @param {NanoBlock} block
  * @param {Uint8Array} update
  * @param {any} [transactionOrigin] This will be stored on `transaction.origin` and `.on('update', (update, origin))`
  * @param {typeof UpdateDecoderV1 | typeof UpdateDecoderV2} [YDecoder]
  *
  * @function
  */
-export const applyUpdateV2 = (ydoc, update, transactionOrigin, YDecoder = UpdateDecoderV2) => {
+export const applyUpdateV2 = (block, update, transactionOrigin, YDecoder = UpdateDecoderV2) => {
   const decoder = decoding.createDecoder(update)
-  readUpdateV2(decoder, ydoc, transactionOrigin, new YDecoder(decoder))
+  readUpdateV2(decoder, block, transactionOrigin, new YDecoder(decoder))
 }
 
 /**
@@ -484,27 +484,27 @@ export const applyUpdateV2 = (ydoc, update, transactionOrigin, YDecoder = Update
  *
  * This function has the same effect as `readUpdate` but accepts an Uint8Array instead of a Decoder.
  *
- * @param {Doc} ydoc
+ * @param {NanoBlock} block
  * @param {Uint8Array} update
  * @param {any} [transactionOrigin] This will be stored on `transaction.origin` and `.on('update', (update, origin))`
  *
  * @function
  */
-export const applyUpdate = (ydoc, update, transactionOrigin) => applyUpdateV2(ydoc, update, transactionOrigin, UpdateDecoderV1)
+export const applyUpdate = (block, update, transactionOrigin) => applyUpdateV2(block, update, transactionOrigin, UpdateDecoderV1)
 
 /**
  * Write all the document as a single update message. If you specify the state of the remote client (`targetStateVector`) it will
  * only write the operations that are missing.
  *
  * @param {UpdateEncoderV1 | UpdateEncoderV2} encoder
- * @param {Doc} doc
+ * @param {NanoBlock} block
  * @param {Map<number,number>} [targetStateVector] The state of the target that receives the update. Leave empty to write all known structs
  *
  * @function
  */
-export const writeStateAsUpdate = (encoder, doc, targetStateVector = new Map()) => {
-  writeClientsStructs(encoder, doc.store, targetStateVector)
-  writeDeleteSet(encoder, createDeleteSetFromStructStore(doc.store))
+export const writeStateAsUpdate = (encoder, block, targetStateVector = new Map()) => {
+  writeClientsStructs(encoder, block.structStore, targetStateVector)
+  writeDeleteSet(encoder, createDeleteSetFromStructStore(block.structStore))
 }
 
 /**
@@ -513,23 +513,23 @@ export const writeStateAsUpdate = (encoder, doc, targetStateVector = new Map()) 
  *
  * Use `writeStateAsUpdate` instead if you are working with lib0/encoding.js#Encoder
  *
- * @param {Doc} doc
+ * @param {NanoBlock} block
  * @param {Uint8Array} [encodedTargetStateVector] The state of the target that receives the update. Leave empty to write all known structs
  * @param {UpdateEncoderV1 | UpdateEncoderV2} [encoder]
  * @return {Uint8Array}
  *
  * @function
  */
-export const encodeStateAsUpdateV2 = (doc, encodedTargetStateVector = new Uint8Array([0]), encoder = new UpdateEncoderV2()) => {
+export const encodeStateAsUpdateV2 = (block, encodedTargetStateVector = new Uint8Array([0]), encoder = new UpdateEncoderV2()) => {
   const targetStateVector = decodeStateVector(encodedTargetStateVector)
-  writeStateAsUpdate(encoder, doc, targetStateVector)
+  writeStateAsUpdate(encoder, block, targetStateVector)
   const updates = [encoder.toUint8Array()]
   // also add the pending updates (if there are any)
-  if (doc.store.pendingDs) {
-    updates.push(doc.store.pendingDs)
+  if (block.structStore.pendingDs) {
+    updates.push(block.structStore.pendingDs)
   }
-  if (doc.store.pendingStructs) {
-    updates.push(diffUpdateV2(doc.store.pendingStructs.update, encodedTargetStateVector))
+  if (block.structStore.pendingStructs) {
+    updates.push(diffUpdateV2(block.structStore.pendingStructs.update, encodedTargetStateVector))
   }
   if (updates.length > 1) {
     if (encoder.constructor === UpdateEncoderV1) {
@@ -542,18 +542,33 @@ export const encodeStateAsUpdateV2 = (doc, encodedTargetStateVector = new Uint8A
 }
 
 /**
+ * Write all the blocks referenced by the document as a map of updates that can be applied on the remote document.
+ *
+ * @param {NanoBlock} block
+ * @return {[Uint8Array, Set<string>]}
+ *
+ * @function
+ */
+export const encodeStateAsUpdateWithRefsV2 = (block) => {
+  const encoder = new UpdateEncoderV2()
+  const update = encodeStateAsUpdateV2(block, undefined, encoder)
+
+  return [update, encoder.refBlockIds]
+}
+
+/**
  * Write all the document as a single update message that can be applied on the remote document. If you specify the state of the remote client (`targetState`) it will
  * only write the operations that are missing.
  *
  * Use `writeStateAsUpdate` instead if you are working with lib0/encoding.js#Encoder
  *
- * @param {Doc} doc
+ * @param {NanoBlock} block
  * @param {Uint8Array} [encodedTargetStateVector] The state of the target that receives the update. Leave empty to write all known structs
  * @return {Uint8Array}
  *
  * @function
  */
-export const encodeStateAsUpdate = (doc, encodedTargetStateVector) => encodeStateAsUpdateV2(doc, encodedTargetStateVector, new UpdateEncoderV1())
+export const encodeStateAsUpdate = (block, encodedTargetStateVector) => encodeStateAsUpdateV2(block, encodedTargetStateVector, new UpdateEncoderV1())
 
 /**
  * Read state vector from Decoder and return as Map
@@ -610,26 +625,26 @@ export const writeStateVector = (encoder, sv) => {
 
 /**
  * @param {DSEncoderV1 | DSEncoderV2} encoder
- * @param {Doc} doc
+ * @param {NanoBlock} block
  *
  * @function
  */
-export const writeDocumentStateVector = (encoder, doc) => writeStateVector(encoder, getStateVector(doc.store))
+export const writeDocumentStateVector = (encoder, block) => writeStateVector(encoder, getStateVector(block.structStore))
 
 /**
  * Encode State as Uint8Array.
  *
- * @param {Doc|Map<number,number>} doc
+ * @param {NanoBlock|Map<number,number>} block
  * @param {DSEncoderV1 | DSEncoderV2} [encoder]
  * @return {Uint8Array}
  *
  * @function
  */
-export const encodeStateVectorV2 = (doc, encoder = new DSEncoderV2()) => {
-  if (doc instanceof Map) {
-    writeStateVector(encoder, doc)
+export const encodeStateVectorV2 = (block, encoder = new DSEncoderV2()) => {
+  if (block instanceof Map) {
+    writeStateVector(encoder, block)
   } else {
-    writeDocumentStateVector(encoder, doc)
+    writeDocumentStateVector(encoder, block)
   }
   return encoder.toUint8Array()
 }
@@ -637,9 +652,9 @@ export const encodeStateVectorV2 = (doc, encoder = new DSEncoderV2()) => {
 /**
  * Encode State as Uint8Array.
  *
- * @param {Doc|Map<number,number>} doc
+ * @param {NanoBlock|Map<number,number>} block
  * @return {Uint8Array}
  *
  * @function
  */
-export const encodeStateVector = doc => encodeStateVectorV2(doc, new DSEncoderV1())
+export const encodeStateVector = block => encodeStateVectorV2(block, new DSEncoderV1())

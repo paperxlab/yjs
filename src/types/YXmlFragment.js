@@ -17,7 +17,7 @@ import {
   transact,
   typeListGet,
   typeListSlice,
-  UpdateDecoderV1, UpdateDecoderV2, UpdateEncoderV1, UpdateEncoderV2, Doc, ContentType, Transaction, Item, YXmlText, YXmlHook // eslint-disable-line
+  UpdateDecoderV1, UpdateDecoderV2, UpdateEncoderV1, UpdateEncoderV2, ContentType, Transaction, Item, YXmlText, YXmlHook, NanoBlock // eslint-disable-line
 } from '../internals.js'
 
 import * as error from 'lib0/error'
@@ -149,11 +149,11 @@ export class YXmlFragment extends AbstractType {
    * * This type is sent to other client
    * * Observer functions are fired
    *
-   * @param {Doc} y The Yjs instance
+   * @param {NanoBlock} block The Yjs instance
    * @param {Item} item
    */
-  _integrate (y, item) {
-    super._integrate(y, item)
+  _integrate (block, item) {
+    super._integrate(block, item)
     this.insert(0, /** @type {Array<any>} */ (this._prelimContent))
     this._prelimContent = null
   }
@@ -304,8 +304,8 @@ export class YXmlFragment extends AbstractType {
    * @param {Array<YXmlElement|YXmlText>} content The array of content
    */
   insert (index, content) {
-    if (this.doc !== null) {
-      transact(this.doc, transaction => {
+    if (this.block !== null) {
+      transact(this.block, transaction => {
         typeListInsertGenerics(transaction, this, index, content)
       })
     } else {
@@ -325,8 +325,8 @@ export class YXmlFragment extends AbstractType {
    * @param {Array<YXmlElement|YXmlText>} content The array of content
    */
   insertAfter (ref, content) {
-    if (this.doc !== null) {
-      transact(this.doc, transaction => {
+    if (this.block !== null) {
+      transact(this.block, transaction => {
         const refItem = (ref && ref instanceof AbstractType) ? ref._item : ref
         typeListInsertGenericsAfter(transaction, this, refItem, content)
       })
@@ -347,8 +347,8 @@ export class YXmlFragment extends AbstractType {
    * @param {number} [length=1] The number of elements to remove. Defaults to 1.
    */
   delete (index, length = 1) {
-    if (this.doc !== null) {
-      transact(this.doc, transaction => {
+    if (this.block !== null) {
+      transact(this.block, transaction => {
         typeListDelete(transaction, this, index, length)
       })
     } else {

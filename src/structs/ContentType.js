@@ -97,7 +97,7 @@ export class ContentType {
    * @param {Item} item
    */
   integrate (transaction, item) {
-    this.type._integrate(transaction.doc, item)
+    this.type._integrate(transaction.block, item)
   }
 
   /**

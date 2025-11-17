@@ -191,7 +191,7 @@ export const findIndexCleanStart = (transaction, structs, clock) => {
  * @function
  */
 export const getItemCleanStart = (transaction, id) => {
-  const structs = /** @type {Array<Item>} */ (transaction.doc.store.clients.get(id.client))
+  const structs = /** @type {Array<Item>} */ (transaction.block.structStore.clients.get(id.client))
   return structs[findIndexCleanStart(transaction, structs, id.clock)]
 }
 

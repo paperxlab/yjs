@@ -17,7 +17,7 @@ import {
   applyUpdateV2,
   LazyStructReader,
   equalDeleteSets,
-  UpdateDecoderV1, UpdateDecoderV2, DSEncoderV1, DSEncoderV2, DSDecoderV1, DSDecoderV2, Transaction, Doc, DeleteSet, Item, // eslint-disable-line
+  UpdateDecoderV1, UpdateDecoderV2, DSEncoderV1, DSEncoderV2, DSDecoderV1, DSDecoderV2, Transaction, NanoBlock, DeleteSet, Item, // eslint-disable-line
   mergeDeleteSets
 } from '../internals.js'
 
@@ -120,10 +120,10 @@ export const createSnapshot = (ds, sm) => new Snapshot(ds, sm)
 export const emptySnapshot = createSnapshot(createDeleteSet(), new Map())
 
 /**
- * @param {Doc} doc
+ * @param {NanoBlock} block
  * @return {Snapshot}
  */
-export const snapshot = doc => createSnapshot(createDeleteSetFromStructStore(doc.store), getStateVector(doc.store))
+export const snapshot = block => createSnapshot(createDeleteSetFromStructStore(block.structStore), getStateVector(block.structStore))
 
 /**
  * @param {Item} item
@@ -142,11 +142,11 @@ export const isVisible = (item, snapshot) => snapshot === undefined
  */
 export const splitSnapshotAffectedStructs = (transaction, snapshot) => {
   const meta = map.setIfUndefined(transaction.meta, splitSnapshotAffectedStructs, set.create)
-  const store = transaction.doc.store
+  const structStore = transaction.block.structStore
   // check if we already split for this snapshot
   if (!meta.has(snapshot)) {
     snapshot.sv.forEach((clock, client) => {
-      if (clock < getState(store, client)) {
+      if (clock < getState(structStore, client)) {
         getItemCleanStart(transaction, createID(client, clock))
       }
     })
@@ -164,20 +164,20 @@ export const splitSnapshotAffectedStructs = (transaction, snapshot) => {
  *  const restored = Y.createDocFromSnapshot(ydoc, snapshot)
  *  assert(restored.getText().toString() === 'world!')
  *
- * @param {Doc} originDoc
+ * @param {NanoBlock} originBlock
  * @param {Snapshot} snapshot
- * @param {Doc} [newDoc] Optionally, you may define the Yjs document that receives the data from originDoc
- * @return {Doc}
+ * @param {NanoBlock} [newBlock] Optionally, you may define the Yjs document that receives the data from originDoc
+ * @return {NanoBlock}
  */
-export const createDocFromSnapshot = (originDoc, snapshot, newDoc = new Doc()) => {
-  if (originDoc.gc) {
+export const createDocFromSnapshot = (originBlock, snapshot, newBlock = new NanoBlock({ type: originBlock.blockType })) => {
+  if (originBlock.gc) {
     // we should not try to restore a GC-ed document, because some of the restored items might have their content deleted
     throw new Error('Garbage-collection must be disabled in `originDoc`!')
   }
   const { sv, ds } = snapshot
 
   const encoder = new UpdateEncoderV2()
-  originDoc.transact(transaction => {
+  originBlock.transact(transaction => {
     let size = 0
     sv.forEach(clock => {
       if (clock > 0) {
@@ -190,10 +190,10 @@ export const createDocFromSnapshot = (originDoc, snapshot, newDoc = new Doc()) =
       if (clock === 0) {
         continue
       }
-      if (clock < getState(originDoc.store, client)) {
+      if (clock < getState(originBlock.structStore, client)) {
         getItemCleanStart(transaction, createID(client, clock))
       }
-      const structs = originDoc.store.clients.get(client) || []
+      const structs = originBlock.structStore.clients.get(client) || []
       const lastStructIndex = findIndexSS(structs, clock - 1)
       // write # encoded structs
       encoding.writeVarUint(encoder.restEncoder, lastStructIndex + 1)
@@ -207,8 +207,8 @@ export const createDocFromSnapshot = (originDoc, snapshot, newDoc = new Doc()) =
     writeDeleteSet(encoder, ds)
   })
 
-  applyUpdateV2(newDoc, encoder.toUint8Array(), 'snapshot')
-  return newDoc
+  applyUpdateV2(newBlock, encoder.toUint8Array(), 'snapshot')
+  return newBlock
 }
 
 /**

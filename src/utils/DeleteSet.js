@@ -58,7 +58,7 @@ export class DeleteSet {
  */
 export const iterateDeletedStructs = (transaction, ds, f) =>
   ds.clients.forEach((deletes, clientid) => {
-    const structs = /** @type {Array<GC|Item>} */ (transaction.doc.store.clients.get(clientid))
+    const structs = /** @type {Array<GC|Item>} */ (transaction.block.structStore.clients.get(clientid))
     for (let i = 0; i < deletes.length; i++) {
       const del = deletes[i]
       iterateStructs(transaction, structs, del.clock, del.len, f)

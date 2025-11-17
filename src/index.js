@@ -2,7 +2,10 @@
 
 export {
   Doc,
+  NanoBlock,
+  NanoStore,
   Transaction,
+  StoreTransaction,
   YArray as Array,
   YMap as Map,
   YText as Text,
@@ -26,6 +29,8 @@ export {
   ContentAny,
   ContentString,
   ContentType,
+  ContentBlockRef,
+  ContentBlockUnref,
   AbstractType,
   getTypeChildren,
   createRelativePositionFromTypeIndex,
@@ -58,6 +63,7 @@ export {
   readUpdateV2,
   encodeStateAsUpdate,
   encodeStateAsUpdateV2,
+  encodeStateAsUpdateWithRefsV2,
   encodeStateVector,
   UndoManager,
   decodeSnapshot,
@@ -76,6 +82,7 @@ export {
   PermanentUserData, // @TODO experimental
   tryGc,
   transact,
+  transactInStore,
   AbstractConnector,
   logType,
   mergeUpdates,
@@ -96,6 +103,10 @@ export {
   equalDeleteSets,
   snapshotContainsUpdate
 } from './internals.js'
+
+/**
+ * @typedef {import("./utils/NanoBlock.js").BlockType} BlockType
+ */
 
 const glo = /** @type {any} */ (typeof globalThis !== 'undefined'
   ? globalThis

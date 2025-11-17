@@ -9,8 +9,7 @@ import {
   YText,
   YMap,
   YXmlFragment,
-  transact,
-  ContentDoc, Item, Transaction, YEvent // eslint-disable-line
+  transact, ContentDoc, Item, Transaction, YEvent // eslint-disable-line
 } from '../internals.js'
 
 import { Observable } from 'lib0/observable'
@@ -19,7 +18,7 @@ import * as map from 'lib0/map'
 import * as array from 'lib0/array'
 import * as promise from 'lib0/promise'
 
-export const generateNewClientId = random.uint32
+const generateNewClientId = random.uint32
 
 /**
  * @typedef {Object} DocOpts
@@ -135,9 +134,9 @@ export class Doc extends Observable {
   load () {
     const item = this._item
     if (item !== null && !this.shouldLoad) {
-      transact(/** @type {any} */ (item.parent).doc, transaction => {
-        transaction.subdocsLoaded.add(this)
-      }, null, true)
+      // transact(/** @type {any} */ (item.parent).doc, transaction => {
+      //   transaction.subdocsLoaded.add(this)
+      // }, null, true)
     }
     this.shouldLoad = true
   }
@@ -164,7 +163,7 @@ export class Doc extends Observable {
    * @public
    */
   transact (f, origin = null) {
-    return transact(this, f, origin)
+    // return transact(this, f, origin)
   }
 
   /**
@@ -305,13 +304,13 @@ export class Doc extends Observable {
       const content = /** @type {ContentDoc} */ (item.content)
       content.doc = new Doc({ guid: this.guid, ...content.opts, shouldLoad: false })
       content.doc._item = item
-      transact(/** @type {any} */ (item).parent.doc, transaction => {
-        const doc = content.doc
-        if (!item.deleted) {
-          transaction.subdocsAdded.add(doc)
-        }
-        transaction.subdocsRemoved.add(this)
-      }, null, true)
+      // transact(/** @type {any} */ (item).parent.doc, transaction => {
+      //   const doc = content.doc
+      //   if (!item.deleted) {
+      //     transaction.subdocsAdded.add(doc)
+      //   }
+      //   transaction.subdocsRemoved.add(this)
+      // }, null, true)
     }
     this.emit('destroyed', [true])
     this.emit('destroy', [this])

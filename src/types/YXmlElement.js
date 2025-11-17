@@ -10,7 +10,7 @@ import {
   typeMapGetAll,
   typeListForEach,
   YXmlElementRefID,
-  YXmlText, ContentType, AbstractType, UpdateDecoderV1, UpdateDecoderV2, UpdateEncoderV1, UpdateEncoderV2, Doc, Item // eslint-disable-line
+  YXmlText, ContentType, AbstractType, UpdateDecoderV1, UpdateDecoderV2, UpdateEncoderV1, UpdateEncoderV2, Item, NanoBlock // eslint-disable-line
 } from '../internals.js'
 
 /**
@@ -59,11 +59,11 @@ export class YXmlElement extends YXmlFragment {
    * * This type is sent to other client
    * * Observer functions are fired
    *
-   * @param {Doc} y The Yjs instance
+   * @param {NanoBlock} block The Yjs instance
    * @param {Item} item
    */
-  _integrate (y, item) {
-    super._integrate(y, item)
+  _integrate (block, item) {
+    super._integrate(block, item)
     ;(/** @type {Map<string, any>} */ (this._prelimAttrs)).forEach((value, key) => {
       this.setAttribute(key, value)
     })
@@ -133,8 +133,8 @@ export class YXmlElement extends YXmlFragment {
    * @public
    */
   removeAttribute (attributeName) {
-    if (this.doc !== null) {
-      transact(this.doc, transaction => {
+    if (this.block !== null) {
+      transact(this.block, transaction => {
         typeMapDelete(transaction, this, attributeName)
       })
     } else {
@@ -153,8 +153,8 @@ export class YXmlElement extends YXmlFragment {
    * @public
    */
   setAttribute (attributeName, attributeValue) {
-    if (this.doc !== null) {
-      transact(this.doc, transaction => {
+    if (this.block !== null) {
+      transact(this.block, transaction => {
         typeMapSet(transaction, this, attributeName, attributeValue)
       })
     } else {

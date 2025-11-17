@@ -10,7 +10,7 @@ import {
   getItemCleanStart,
   isDeleted,
   addToDeleteSet,
-  Transaction, Doc, Item, GC, DeleteSet, AbstractType // eslint-disable-line
+  Transaction, Item, GC, DeleteSet, AbstractType, NanoBlock // eslint-disable-line
 } from '../internals.js'
 
 import * as time from 'lib0/time'
@@ -62,11 +62,11 @@ const popStackItem = (undoManager, stack, eventType) => {
    * @type {any}
    */
   let _tr = null
-  const doc = undoManager.doc
+  const block = undoManager.block
   const scope = undoManager.scope
-  transact(doc, transaction => {
+  transact(block, transaction => {
     while (stack.length > 0 && result === null) {
-      const store = doc.store
+      const structStore = block.structStore
       const stackItem = /** @type {StackItem} */ (stack.pop())
       /**
        * @type {Set<Item>}
@@ -80,7 +80,7 @@ const popStackItem = (undoManager, stack, eventType) => {
       iterateDeletedStructs(transaction, stackItem.insertions, struct => {
         if (struct instanceof Item) {
           if (struct.redone !== null) {
-            let { item, diff } = followRedone(store, struct.id)
+            let { item, diff } = followRedone(structStore, struct.id)
             if (diff > 0) {
               item = getItemCleanStart(transaction, createID(item.id.client, item.id.clock + diff))
             }
@@ -140,7 +140,7 @@ const popStackItem = (undoManager, stack, eventType) => {
  * undo/redo scope.
  * @property {Set<any>} [UndoManagerOptions.trackedOrigins=new Set([null])]
  * @property {boolean} [ignoreRemoteMapChanges] Experimental. By default, the UndoManager will never overwrite remote changes. Enable this property to enable overwriting remote changes on key-value changes (Y.Map, properties on Y.Xml, etc..).
- * @property {Doc} [doc] The document that this UndoManager operates on. Only needed if typeScope is empty.
+ * @property {NanoBlock} [block] The document that this UndoManager operates on. Only needed if typeScope is empty.
  */
 
 /**
@@ -163,14 +163,14 @@ export class UndoManager extends Observable {
     deleteFilter = () => true,
     trackedOrigins = new Set([null]),
     ignoreRemoteMapChanges = false,
-    doc = /** @type {Doc} */ (array.isArray(typeScope) ? typeScope[0].doc : typeScope.doc)
+    block = /** @type {NanoBlock} */ (array.isArray(typeScope) ? typeScope[0].block : typeScope.block)
   } = {}) {
     super()
     /**
      * @type {Array<AbstractType<any>>}
      */
     this.scope = []
-    this.doc = doc
+    this.block = block
     this.addToScope(typeScope)
     this.deleteFilter = deleteFilter
     trackedOrigins.add(this)
@@ -251,8 +251,8 @@ export class UndoManager extends Observable {
         this.emit('stack-item-updated', changeEvent)
       }
     }
-    this.doc.on('afterTransaction', this.afterTransactionHandler)
-    this.doc.on('destroy', () => {
+    this.block.on('afterTransaction', this.afterTransactionHandler)
+    this.block.on('destroy', () => {
       this.destroy()
     })
   }
@@ -264,7 +264,7 @@ export class UndoManager extends Observable {
     ytypes = array.isArray(ytypes) ? ytypes : [ytypes]
     ytypes.forEach(ytype => {
       if (this.scope.every(yt => yt !== ytype)) {
-        if (ytype.doc !== this.doc) logging.warn('[yjs#509] Not same Y.Doc') // use MultiDocUndoManager instead. also see https://github.com/yjs/yjs/issues/509
+        if (ytype.block !== this.block) logging.warn('[yjs#509] Not same Y.Doc') // use MultiDocUndoManager instead. also see https://github.com/yjs/yjs/issues/509
         this.scope.push(ytype)
       }
     })
@@ -286,7 +286,7 @@ export class UndoManager extends Observable {
 
   clear (clearUndoStack = true, clearRedoStack = true) {
     if ((clearUndoStack && this.canUndo()) || (clearRedoStack && this.canRedo())) {
-      this.doc.transact(tr => {
+      this.block.transact(tr => {
         if (clearUndoStack) {
           this.undoStack.forEach(item => clearUndoManagerStackItem(tr, this, item))
           this.undoStack = []
@@ -376,7 +376,7 @@ export class UndoManager extends Observable {
 
   destroy () {
     this.trackedOrigins.delete(this)
-    this.doc.off('afterTransaction', this.afterTransactionHandler)
+    this.block.off('afterTransaction', this.afterTransactionHandler)
     super.destroy()
   }
 }

@@ -38,7 +38,7 @@ export class GC extends AbstractStruct {
       this.id.clock += offset
       this.length -= offset
     }
-    addStruct(transaction.doc.store, this)
+    addStruct(transaction.block.structStore, this)
   }
 
   /**
