@@ -27,6 +27,7 @@ const generateNewBlockId = random.uuidv4
  * @property {function(Item):boolean} [gcFilter] Will be called before an Item is garbage collected. Return false to keep the Item.
  * @property {boolean} [isRoot] Whether this is a root block
  * @property {string | null} [name] You can optionally assign a name to a block
+ * @property {NanoBlock | null} [rootBlock] The root block this block belongs to
  */
 
 /**
@@ -43,7 +44,7 @@ export class NanoBlock extends Observable {
     /**
      * @type {string | null}
      */
-    this._uid = opts.id ?? (opts.isRoot ? null : generateNewBlockId())
+    this._id = opts.isRoot ? null : (opts.id ?? generateNewBlockId())
 
     /**
      * @type {BlockType}
@@ -91,6 +92,11 @@ export class NanoBlock extends Observable {
     this.name = opts.name ?? null
 
     /**
+     * @type {Map<string, NanoBlock> | null}
+     */
+    this.blocks = this.isRoot ? new Map() : null
+
+    /**
      * @type {Transaction | null}
      */
     this._transaction = null
@@ -115,7 +121,7 @@ export class NanoBlock extends Observable {
      * @type {NanoBlock | null}
      * @private
      */
-    this._rootBlock = null
+    this._rootBlock = this.isRoot ? this : (opts.rootBlock ?? null)
 
     /**
      * @type {boolean}
@@ -130,28 +136,12 @@ export class NanoBlock extends Observable {
   }
 
   /**
-   * @type {string | null}
+   * Get the ID of this block.
+   * If this is a root block, the ID is prefixed with `@`.
+   * @returns {string} The ID of this block
    */
-  get uid () {
-    return this._uid
-  }
-
-  /**
-   * @param {string} newUid
-   */
-  set uid (newUid) {
-    if (this._uid) {
-      console.error('Cannot set id of block which already has an id.')
-      return
-    }
-    this._uid = newUid
-    if (this.store) {
-      this.store.blocks.set(newUid, this)
-    }
-  }
-
   get id () {
-    return this.uid ?? `${NAME_ID_PREFIX}${this.name}`
+    return this.isRoot ? `${NAME_ID_PREFIX}${this.name}` : /** @type {string} */ (this._id);
   }
 
   /**
@@ -246,15 +236,7 @@ export class NanoBlock extends Observable {
    * @returns {NanoBlock | null}
    */
   getRootBlock () {
-    if (this._rootBlock) {
-      return this._rootBlock
-    }
-    const root = this.isRoot ? this : this._referrer?.block?.getRootBlock() ?? null
-    if (root) {
-      this._rootBlock = root
-      return root
-    }
-    return null
+    return this._rootBlock
   }
 
   /**
@@ -262,24 +244,95 @@ export class NanoBlock extends Observable {
    * @return {NanoBlock}
    */
   clone (opt = {}) {
+    const rootBlock = this.getRootBlock()
     /** @type {NanoBlock} */
     let block
-    if (this.store) {
-      block = this.store.createBlock(this.blockType)
+    if (rootBlock) {
+      block = rootBlock.createBlock(this.blockType, opt.id)
     } else {
+      // If no root block (standalone block), create directly
       block = new NanoBlock({
         id: opt.id,
         type: this.blockType,
         gc: this.gc,
         gcFilter: this.gcFilter,
         store: this.store,
-        isRoot: opt.isRoot
+        isRoot: opt.isRoot,
+        rootBlock: opt.isRoot ? null : rootBlock
       })
     }
     // Apply all items to the new block
     const newType = this.getType().clone()
     block.share.set('', newType)
     newType._integrate(block, null)
+    return block
+  }
+
+  /**
+   * Get all child blocks of this root block
+   * @returns {Map<string, NanoBlock>}
+   */
+  getBlocks () {
+    if (!this.isRoot) {
+      throw new Error('getBlocks() can only be called on root blocks')
+    }
+    return /** @type {Map<string, NanoBlock>} */ (this.blocks)
+  }
+
+  /**
+   * Get a child block by ID (only for root blocks)
+   * @param {string} id
+   * @returns {NanoBlock | undefined}
+   */
+  getBlock (id) {
+    if (!this.isRoot) {
+      throw new Error('getBlock() can only be called on root blocks')
+    }
+    return /** @type {Map<string, NanoBlock>} */ (this.blocks).get(id)
+  }
+
+  /**
+   * Create a child block (only for root blocks)
+   * @param {BlockType} blockType
+   * @param {string | undefined} [id]
+   * @param {AbstractType<any> | undefined} [type]
+   * @returns {NanoBlock}
+   */
+  createBlock (blockType, id, type) {
+    if (!this.isRoot) {
+      throw new Error('createBlock() can only be called on root blocks')
+    }
+    const block = new NanoBlock({
+      store: this.store,
+      type: blockType,
+      id,
+      rootBlock: this
+    })
+    this.blocks?.set(block.id, block)
+    if (type) {
+      block.share.set('', type)
+      type._integrate(block, null)
+    }
+    if (this.store && this.store._transaction) {
+      this.store._transaction.blocksAdded.add(block)
+    }
+    return block
+  }
+
+  /**
+   * Get or create a child block (only for root blocks)
+   * @param {string} id
+   * @param {BlockType} type
+   * @returns {NanoBlock}
+   */
+  getOrCreateBlock (id, type) {
+    if (!this.isRoot) {
+      throw new Error('getOrCreateBlock() can only be called on root blocks')
+    }
+    let block = this.getBlock(id)
+    if (!block) {
+      block = this.createBlock(type, id)
+    }
     return block
   }
 }

@@ -578,7 +578,10 @@ const resolveBlockRefs = (storeTransaction) => {
     }
     if (ref._block._referrer && ref._item !== ref._block._referrer) {
       console.warn('Resolving conflict in transaction cleanup', ref)
-      resolveRefConflict(store, ref._block._referrer.content)
+      const rootBlock = ref._block.getRootBlock()
+      if (rootBlock) {
+        resolveRefConflict(rootBlock, ref._block._referrer.content)
+      }
     }
     updateBlockReferrer(ref._block, ref)
     validateCircularRef(/** @type {Item & { content: ContentBlockRef }} */(ref._item))

@@ -80,14 +80,20 @@ export class ContentBlockRef {
     // ref の conflict や循環参照が見つかった場合
     // tr.local なら、この場で解決する.
     // tr.local でないなら、ここでは解決せずに、cleanup の中で解決する（つまり次の local な transaction).
+    
+    // Get root block from parent - it must exist since refs are always inside a root block
+    const parentType = /** @type {AbstractType<any>} */ (item.parent)
+    const parentBlock = /** @type {NanoBlock} */ (parentType.block)
+    const rootBlock = /** @type {NanoBlock} */ (parentBlock.getRootBlock())
+
     if (transaction.local) {
       if (this.blockId && this.blockType) {
-        const block = store.getOrCreateBlock(this.blockId, this.blockType)
+        const block = rootBlock.getOrCreateBlock(this.blockId, this.blockType)
         // conflict
         if (block._referrer) {
           // この item は削除されて、clone された block に対して新しい ref が作成される
           console.warn('Resolving conflit in ContentBlockRef.integrate', this)
-          resolveRefConflict(store, this)
+          resolveRefConflict(rootBlock, this)
         } else {
           this._block = block
           this._type = block.getType()
@@ -97,7 +103,7 @@ export class ContentBlockRef {
         }
       } else if (this._type && !this._block) {
         // block を作成する
-        this._block = store.createBlock(this.blockType, undefined, this._type)
+        this._block = rootBlock.createBlock(this.blockType, undefined, this._type)
         this.blockId = this._block.id
         updateBlockReferrer(this._block, this)
         validateCircularRef(this._item)
@@ -105,7 +111,7 @@ export class ContentBlockRef {
     } else {
       // local でない場合は、必ず blockId と blockType が存在する
       // またここでは block.referrer の設定も行わない
-      const block = store.getOrCreateBlock(this.blockId, this.blockType)
+      const block = rootBlock.getOrCreateBlock(this.blockId, this.blockType)
       this._block = block
       this._type = block.getType()
     }
@@ -330,10 +336,10 @@ export const readContentBlockRef = decoder => new ContentBlockRef(createContentB
 export const readContentBlockUnRef = decoder => new ContentBlockUnref(createContentBlockUnrefFromDecoder(decoder))
 
 /**
- * @param {NanoStore} store
+ * @param {NanoBlock} rootBlock
  * @param {ContentBlockRef} ref The ref conflicted
  */
-export function resolveRefConflict (store, ref) {
+export function resolveRefConflict (rootBlock, ref) {
   if (ref._item?.deleted) return
   // Clone conflicted item
   // if the conflicted item is in map, delete it
@@ -342,7 +348,7 @@ export function resolveRefConflict (store, ref) {
     const map = /** @type {YMap<any>} */ (ref._item.parent)
     // 必ず元の item を削除してから clone することで、循環参照が作られないようにする
     map.delete(key)
-    const cloned = cloneBlock(store, ref.blockId)
+    const cloned = cloneBlock(rootBlock, ref.blockId)
     map.set(key, cloned)
   } else if (ref._item && ref._item.parentSub == null) {
     // if the conflicted item is in array, delete it
@@ -358,18 +364,18 @@ export function resolveRefConflict (store, ref) {
     }
     // 必ず元の item を削除してから clone することで、循環参照が作られないようにする
     array.delete(index)
-    const cloned = cloneBlock(store, ref.blockId)
+    const cloned = cloneBlock(rootBlock, ref.blockId)
     array.insert(index, [cloned])
   }
 }
 
 /**
- * @param {NanoStore} store
+ * @param {NanoBlock} rootBlock
  * @param {string} blockId
  * @return {AbstractType<any>}
  */
-function cloneBlock (store, blockId) {
-  const block = store.getBlock(blockId)
+function cloneBlock (rootBlock, blockId) {
+  const block = rootBlock.getBlock(blockId)
   if (!block) throw new Error('Block not found')
   const type = block.getType()
 
@@ -380,7 +386,7 @@ function cloneBlock (store, blockId) {
     while (item != null) {
       if (item.countable && !item.deleted) {
         if (item.content instanceof ContentBlockRef) {
-          newType.push([cloneBlock(store, item.content.blockId)])
+          newType.push([cloneBlock(rootBlock, item.content.blockId)])
         } else {
           newType.push(item.content.getContent().map(c => {
             if (c instanceof AbstractType) {
@@ -401,7 +407,7 @@ function cloneBlock (store, blockId) {
     type._map.forEach((item, key) => {
       if (item.countable && !item.deleted) {
         if (item.content instanceof ContentBlockRef) {
-          newType.set(key, cloneBlock(store, item.content.blockId))
+          newType.set(key, cloneBlock(rootBlock, item.content.blockId))
         } else {
           const c = item.content.getContent()
           if (c[c.length - 1] instanceof AbstractType) {

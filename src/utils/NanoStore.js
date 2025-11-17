@@ -48,11 +48,6 @@ export class NanoStore extends Observable {
     this.roots = new Map()
 
     /**
-     * @type {BlockMap}
-     */
-    this.blocks = new Map()
-
-    /**
      * @type {StoreTransaction | null}
      */
     this._transaction = null
@@ -94,7 +89,6 @@ export class NanoStore extends Observable {
         type: blockType
       })
       this.roots.set(name, block)
-      this.blocks.set(block.id, block)
       if (this._transaction) {
         this._transaction.blocksAdded.add(block)
       }
@@ -110,61 +104,6 @@ export class NanoStore extends Observable {
     return this.roots.get(rootBlockName)
   }
 
-  /**
-   * @param {string} id
-   * @returns {NanoBlock | undefined}
-   */
-  getBlock (id) {
-    return this.blocks.get(id)
-  }
-
-  /**
-   * @param {string} id
-   * @param {import("./NanoBlock.js").BlockType} type
-   * @returns {NanoBlock}
-   */
-  getOrCreateBlock (id, type) {
-    let block = this.getBlock(id)
-    if (!block) {
-      block = this.createBlock(type, id)
-    }
-    return block
-  }
-
-  /**
-   * Create block
-   * @param {import("./NanoBlock.js").BlockType} blockType
-   * @param {string | undefined} [id]
-   * @param {AbstractType<any> | undefined} [type]
-   */
-  createBlock (blockType, id, type) {
-    const block = new NanoBlock({
-      store: this,
-      type: blockType,
-      id
-    })
-    this.blocks.set(block.id, block)
-    if (type) {
-      block.share.set('', type)
-      type._integrate(block, null)
-    }
-    if (this._transaction) {
-      this._transaction.blocksAdded.add(block)
-    }
-    return block
-  }
-
-  /**
-   * Create block
-   * @template {import("./NanoBlock.js").BlockType} T
-   * @param {T} blockType
-   * @param {string | undefined} [id]
-   * @return {import("./NanoBlock.js").TypeNameToTypeConstructor[T]} [type]
-   */
-  createBlockType (blockType, id) {
-    const block = this.createBlock(blockType, id)
-    return block.getType()
-  }
 
   /**
    * @template {import("./NanoBlock.js").BlockType} T
