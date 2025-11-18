@@ -101,3 +101,43 @@ map.set("child", array) のようにした時に、どうやってもそこの�
   - NG: `testDocRefDeletionAddsUnrefAndSerializes`（同上）。
   - NG: `testDocRefSyncRoundtripRestoresRefs`（replicated が Array にならずアサート落ち）。
 - 全テスト実行 (`node ./tests/index.js`) では y-map 系など既存ユニットも初期段階から構造不一致で失敗している状態。
+
+## PoC から本実装への移行ガイド（Codex 用）
+
+PoC を使っていたプロジェクトが現行実装へ移行する際の差分と作業手順をまとめる。迷いなく移行できるように、リネームや挙動変更を網羅した。
+
+### 主な仕様差分
+- NanoStore/NanoBlock 廃止: ルート Doc（`root: true`）配下に参照 Doc を束ねる設計に統合。Transaction もルート単位で束ねる。
+- ContentBlockRef/Unref → ContentDocRef/Unref にリネーム。`blockType` 相当は `typeRef` に格納し、参照先 Doc のルートタイプ解決に使用。
+- `autoRef`/`createRef` で参照化判定を行う（PoC の block フラグ相当）。`autoRef: true` で未指定 createRef のネスト型は自動で ContentDocRef になる。
+- 参照 Doc は `rootDoc.refDocs` で管理（subdoc とは別）。`getRefDoc(guid)` で解決。
+- 参照の競合はクローン生成で解決（同一 Type を複数箇所に差し込むと Doc ごと複製）。循環参照は検知して該当参照を削除。
+- 参照削除で `ContentDocUnref` を `_unrefs` に積む仕様を追加。`doc._referrer` もクリアされる。
+- Root Transaction イベントを追加（`afterAllObserverCalls` 等）。ルート配下の複数 Doc 変更をまとめてフック可能。
+- Update バイナリに ContentDocRef/Unref が含まれるため、本家 Yjs とはバイナリ互換なし。フォーク同士でのみ同期可能。
+
+### 移行手順チェックリスト
+1) Doc 生成を確認  
+   - ルートとなる Doc は `new Y.Doc({ root: true, autoRef: <必要に応じて> })` に置き換える。PoC の NanoStore 相当。
+   - 既存の子 Doc/NanoBlock は通常の Type（Map/Array/Text/Xml*）として生成し、`createRef` を必要に応じて指定。
+2) 参照 API の置き換え  
+   - ContentBlockRef/Unref の import/型参照は ContentDocRef/Unref に置き換える。`blockType` ではなく `typeRef` を参照する。
+   - 参照 Doc 参照箇所は `rootDoc.getRefDoc(guid)` を使用。subdoc API とは混在させない。
+3) 自動参照化ポリシーの設定  
+   - PoC で「block フラグ」に頼っていた箇所は、`createRef` を Type にセットするか、root Doc の `autoRef` を有効にするかで再現する。
+   - 深い埋め込みを維持したい箇所は `createRef = false` を明示。
+4) 削除/unref ハンドリング  
+   - 参照を削除したときに `_unrefs`（`Y.Array`）へ追加されるため、永続化や同期で検出する場合はこの配列を読むようにする。
+5) 競合・循環への対応  
+   - 同一 Type を複数箇所に挿入した場合は Doc クローンが生成される前提でコードを見直す。循環参照を作ろうとすると該当挿入が消える挙動をテストに追加。
+6) Root Transaction イベントへの移行（必要な場合）  
+   - ルート単位で update 収集が必要なら `updateV2Root` 等のイベントを購読し、`Map<Doc, Uint8Array>` を処理するよう変更。
+7) 同期・エンコード  
+   - ContentDocRef/Unref を含む更新は本家では decode できない。ネットワーク/ストレージが fork 同士で閉じていることを確認し、混在環境では `autoRef: false` かつ `createRef` 未設定を徹底する。
+
+### 参考テストケース（移行後に通すとよいもの）
+- 基本参照生成: autoRef/createRef フラグで参照 Doc が作成され、`refDocs` に登録されること。
+- 競合クローン: 同一 Type の複数配置で Doc が複製され、内容が独立すること。
+- 循環参照除去: 親への再参照や自己参照を挿入しようとしても構造が汚れないこと。
+- 削除と Unref: 削除で `_unrefs` が積まれ、referrer が消えること。encode/apply 後も維持されること。
+- 同期: encodeStateAsUpdate/applyUpdate で参照階層が復元されること。
