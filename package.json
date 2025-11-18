@@ -1,6 +1,6 @@
 {
   "name": "@paperxlab/yjs",
-  "version": "13.6.27-xy0.0.0",
+  "version": "13.6.27-xy0.0.1",
   "description": "Shared Editing Library",
   "main": "./dist/yjs.cjs",
   "module": "./dist/yjs.mjs",
