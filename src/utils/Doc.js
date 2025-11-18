@@ -234,18 +234,29 @@ export class Doc extends ObservableV2 {
    * @returns {Doc | undefined}
    */
   getRefDoc (guid) {
+    if (!this.isRoot) {
+      throw new Error('getRefDoc can only be called on root documents')
+    }
     return this.refDocs.get(guid)
   }
 
   /**
-   * Register a referenced doc under this root.
-   * @param {Doc} doc
+   *
+   * @param {string} [guid]
    */
-  addRefDoc (doc) {
-    if (!doc.rootDoc) {
-      doc.rootDoc = this.rootDoc || this
+  createRefDoc (guid) {
+    if (!this.isRoot) {
+      throw new Error('createRefDoc can only be called on root documents')
     }
-    this.refDocs.set(doc.guid, doc)
+    const newDoc = new Doc({
+      guid: guid || random.uuidv4(),
+      root: false,
+      clientID: this.clientID,
+      autoRef: this.autoRef
+    })
+    newDoc.rootDoc = this
+    this.refDocs.set(newDoc.guid, newDoc)
+    return newDoc
   }
 
   /**

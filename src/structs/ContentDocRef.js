@@ -91,12 +91,7 @@ export class ContentDocRef {
             return
           }
         } else {
-          doc = new Doc({
-            gc: rootDoc.gc,
-            clientID: rootDoc.clientID,
-            autoRef: rootDoc.autoRef
-          })
-          rootDoc.addRefDoc(doc)
+          doc = rootDoc.createRefDoc()
           this.guid = doc.guid
           this._type._integrate(doc, null)
           doc.share.set('', this._type)
@@ -112,13 +107,7 @@ export class ContentDocRef {
         let doc = rootDoc.getRefDoc(this.guid)
         if (!doc) {
           // TODO: option をいくつか引き継ぐべき
-          doc = new Doc({
-            guid: this.guid,
-            gc: rootDoc.gc,
-            clientID: rootDoc.clientID,
-            autoRef: rootDoc.autoRef
-          })
-          rootDoc.addRefDoc(doc)
+          doc = rootDoc.createRefDoc(this.guid)
           // referrer の設定などは transaction の最後で行われる
           // なぜなら非 local な transaction 内で新しい transaction を作成する可能性があるため
         }
