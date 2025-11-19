@@ -233,9 +233,19 @@ export class ContentDocUnref {
   constructor (opt) {
     this.guid = opt.guid
     this.id = opt.id
+
+    /** @type {Item | null} */
+    this._item = null
   }
 
-  integrate () { }
+  /**
+   * @param {Transaction} transaction
+   * @param {Item} item
+   */
+  integrate (transaction, item) {
+    this._item = item
+    item.keep = true
+  }
 
   getLength () {
     return 1
