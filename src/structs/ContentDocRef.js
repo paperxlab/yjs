@@ -202,8 +202,8 @@ export class ContentDocRef {
         rt.docRefsRemoved.add(this)
       }
     }
-    if (transaction.local && doc) {
-      addUnrefToDoc(doc, this)
+    if (transaction.local && this._item && this._item.parent instanceof AbstractType && this._item.parent.doc) {
+      addUnrefToDoc(this._item.parent.doc, this)
     }
   }
 

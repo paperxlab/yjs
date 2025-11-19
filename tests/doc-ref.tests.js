@@ -162,9 +162,9 @@ export const testDocRefDeletionAddsUnrefAndSerializes = _tc => {
   map.delete('child')
 
   t.assert(childDoc?._referrer === null, 'referrer cleared on delete')
-  const unrefs = childDoc?.get('_unrefs', Y.Array)
-  t.assert(unrefs?.length === 1, 'unref entry added to child doc')
-  t.assert(unrefs?.get(0) === childDoc?.guid, 'unref value matches guid')
+  const unrefs = root.get('_unrefs', Y.Array)
+  t.assert(unrefs.length === 1, 'unref entry added to referrer doc')
+  t.assert(unrefs.get(0) === childDoc?.guid, 'unref value matches guid')
 }
 
 /**
