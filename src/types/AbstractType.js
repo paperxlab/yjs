@@ -248,8 +248,10 @@ export const callTypeObservers = (type, transaction, event) => {
   /** @type {Set<string>|null} */
   const seenDocGuids = transaction.rootTransaction ? new Set() : null
   while (true) {
-    // @ts-ignore
-    map.setIfUndefined(changedParentTypes, type, () => []).push(event)
+    if (type.doc === transaction.doc) {
+      // @ts-ignore
+      map.setIfUndefined(changedParentTypes, type, () => []).push(event)
+    }
     if (transaction.rootTransaction) {
       // @ts-ignore
       map.setIfUndefined(transaction.rootTransaction.changedParentTypes, type, () => []).push(event)

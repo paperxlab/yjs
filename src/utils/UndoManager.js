@@ -35,6 +35,20 @@ export class StackItem {
 }
 
 /**
+ * @param {Doc} docA
+ * @param {Doc} docB
+ */
+const isDocAncestor = (docA, docB) => {
+  let n = docB
+  while (n) {
+    if (n === docA) return true
+    if (!n._referrer) break
+    n = /** @type {AbstractType<any>} */ (n._referrer.parent).doc || /** @type {any} */ (null)
+  }
+  return false
+}
+
+/**
  * @param {Transaction} tr
  * @param {UndoManager} um
  * @param {StackItem} stackItem
@@ -69,9 +83,26 @@ const popStackItem = (undoManager, stack, eventType) => {
     while (stack.length > 0 && undoManager.currStackItem === null) {
       const stackItem = /** @type {StackItem} */ (stack.pop())
       let performedChange = false
-      stackItem.entries.forEach(({ insertions, deletions }, doc) => {
+      const entries = Array.from(stackItem.entries.entries())
+      // We always process the stack item in reverse order of how it was constructed.
+      // For Undo: The stack item was constructed in forward order (child, grandChild). We want to undo grandChild then child. So reverse.
+      // For Redo: The stack item was constructed during Undo, which executed grandChild then child. So it contains (grandChild, child). We want to redo child then grandChild. So reverse.
+      if (eventType === 'redo') {
+        entries.reverse()
+      } else {
+        // sort entries by their depth in the document tree
+        // this is necessary because we want to undo changes in the child document before we undo changes in the parent document
+        // otherwise the child document might not exist anymore when we try to undo changes in it
+        entries.sort((a, b) => {
+          if (a[0] === b[0]) return 0
+          if (isDocAncestor(a[0], b[0])) return 1
+          return -1
+        })
+      }
+      entries.forEach(([doc, { insertions, deletions }]) => {
         transact(doc, transaction => {
           const store = doc.store
+          const detachedDocs = transaction.rootTransaction ? transaction.rootTransaction.detachedDocs : null
           /**
            * @type {Set<Item>}
            */
@@ -89,7 +120,7 @@ const popStackItem = (undoManager, stack, eventType) => {
                 }
                 struct = item
               }
-              if (!struct.deleted && scope.some(type => type === transaction.doc || isParentOf(/** @type {AbstractType<any>} */(type), /** @type {Item} */(struct), true))) {
+              if (!struct.deleted && scope.some(type => type === transaction.doc || isParentOf(/** @type {AbstractType<any>} */(type), /** @type {Item} */(struct), true, detachedDocs))) {
                 itemsToDelete.push(struct)
               }
             }
@@ -97,7 +128,7 @@ const popStackItem = (undoManager, stack, eventType) => {
           iterateDeletedStructs(transaction, deletions, struct => {
             if (
               struct instanceof Item &&
-              scope.some(type => type === transaction.doc || isParentOf(/** @type {AbstractType<any>} */(type), struct, true)) &&
+              scope.some(type => type === transaction.doc || isParentOf(/** @type {AbstractType<any>} */(type), struct, true, detachedDocs)) &&
               // Never redo structs in stackItem.insertions because they were created and deleted in the same capture interval.
               !isDeleted(insertions, struct.id)
             ) {
@@ -105,7 +136,8 @@ const popStackItem = (undoManager, stack, eventType) => {
             }
           })
           itemsToRedo.forEach(struct => {
-            performedChange = redoItem(transaction, struct, itemsToRedo, insertions, undoManager.ignoreRemoteMapChanges, undoManager) !== null || performedChange
+            const res = redoItem(transaction, struct, itemsToRedo, insertions, undoManager.ignoreRemoteMapChanges, undoManager)
+            performedChange = res !== null || performedChange
           })
           // We want to delete in reverse order so that children are deleted before
           // parents, so we have more information available when items are filtered.
@@ -155,7 +187,11 @@ const addToUndoStack = (undoManager, transactions, origin) => {
   // Only track certain transactions
   const relevantTransactions = transactions.filter(transaction =>
     undoManager.captureTransaction(transaction) &&
-    undoManager.scope.some(type => transaction.changedParentTypes.has(/** @type {AbstractType<any>} */(type)) || type === transaction.doc) &&
+    undoManager.scope.some(type =>
+      transaction.changedParentTypes.has(/** @type {AbstractType<any>} */ (type)) ||
+      (transaction.rootTransaction && transaction.rootTransaction.changedParentTypes.has(/** @type {AbstractType<any>} */ (type))) ||
+      type === transaction.doc
+    ) &&
     (undoManager.trackedOrigins.has(transaction.origin) || (transaction.origin && undoManager.trackedOrigins.has(transaction.origin.constructor)))
   )
 
@@ -211,8 +247,9 @@ const addToUndoStack = (undoManager, transactions, origin) => {
 
   // make sure that deleted structs are not gc'd
   relevantTransactions.forEach(transaction => {
+    const detachedDocs = transaction.rootTransaction ? transaction.rootTransaction.detachedDocs : null
     iterateDeletedStructs(transaction, transaction.deleteSet, /** @param {Item|GC} item */ item => {
-      if (item instanceof Item && undoManager.scope.some(type => type === transaction.doc || isParentOf(/** @type {AbstractType<any>} */(type), item, true))) {
+      if (item instanceof Item && undoManager.scope.some(type => type === transaction.doc || isParentOf(/** @type {AbstractType<any>} */(type), item, true, detachedDocs))) {
         keepItem(item, true)
       }
     })

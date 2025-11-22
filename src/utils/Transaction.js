@@ -40,6 +40,8 @@ export class RootTransaction {
     this.docRefsAdded = new Set()
     /** @type {Set<import('../structs/ContentDocRef.js').ContentDocRef>} */
     this.docRefsRemoved = new Set()
+    /** @type {Map<Doc, Item>} */
+    this.detachedDocs = new Map()
     /** @type {Array<YEvent<any>>} */
     this.events = []
     /**

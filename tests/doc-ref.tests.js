@@ -203,19 +203,34 @@ export const testDocRefUndoAcrossDocs = _tc => {
   const child = new Y.Map()
   parent.set('child', child)
 
-  const childDoc = /** @type {Y.Doc} */ (child.doc)
-  const childRoot = childDoc.getMap('')
-
   const um = new Y.UndoManager(parent)
 
-  childRoot.set('title', 'hello')
+  child.set('title', 'hello')
   t.assert(um.canUndo(), 'undo stack tracks change in ref doc')
 
   um.undo()
-  t.assert(childRoot.has('title') === false, 'undo removed change inside ref doc')
+  t.assert(child.has('title') === false, 'undo removed change inside ref doc')
 
   um.redo()
-  t.assert(childRoot.get('title') === 'hello', 'redo restored change inside ref doc')
+  t.assert(child.get('title') === 'hello', 'redo restored change inside ref doc')
+
+  const grandChild = new Y.Map()
+  child.set('grand', grandChild)
+
+  grandChild.set('note', 'world')
+  t.assert(um.canUndo(), 'undo stack tracks change in nested ref doc')
+
+  um.undo()
+  t.assert(grandChild.has('note') === false, 'undo removed change inside nested ref doc')
+
+  um.redo()
+  console.log('After redo:', {
+    hasNote: grandChild.has('note'),
+    noteValue: grandChild.get('note'),
+    grandChildGuid: grandChild.doc ? grandChild.doc.guid : 'no-doc',
+    grandChildKeys: Array.from(grandChild.keys())
+  })
+  t.assert(grandChild.get('note') === 'world', 'redo restored change inside nested ref doc')
 }
 
 /**

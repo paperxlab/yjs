@@ -61,23 +61,7 @@ export class ContentDocRef {
     // ref の conflict や循環参照が見つかった場合
     // tr.local なら、この場で解決する.
     // tr.local でないなら、ここでは解決せずに、cleanup の中で解決する（つまり次の local な transaction).
-
-    // transaction.local の場合は、this._type が存在する
     if (transaction.local) {
-      // guid から作成の場合、doc を取得または作成する
-      // if (this.guid) {
-      //   let doc = rootDoc.getRefDoc(this.guid)
-      //   if (!doc) {
-      //     // TODO: option をいくつか引き継ぐべき
-      //     doc = new Doc({ guid: this.guid, gc: rootDoc.gc })
-      //   }
-      //   if (doc._referrer) {
-      //     // この item を削除して、ref の競合を解決する
-      //     resolveRefConflict(rootDoc, this)
-      //   } else {
-      //     doc._referrer = item
-      //   }
-      // } else
       if (this._type) {
         let doc = this._type.doc
         if (doc) {
@@ -98,6 +82,23 @@ export class ContentDocRef {
         }
         doc._referrer = item
         validateCircularRef(item)
+      } else if (this.guid) {
+        let doc = rootDoc.getRefDoc(this.guid)
+        if (!doc) {
+          doc = rootDoc.createRefDoc(this.guid)
+          const TypeConstructor = typeRefToConstructor[this.typeRef]
+          if (!TypeConstructor) {
+            throw new Error('Unknown typeRef: ' + this.typeRef)
+          }
+          doc.get('', TypeConstructor)
+        }
+        if (doc._referrer) {
+          // この item を削除して、ref の競合を解決する
+          resolveRefConflict(rootDoc, this)
+          return
+        }
+        doc._referrer = item
+        validateCircularRef(item)
       } else {
         throw error.unexpectedCase()
       }
@@ -106,8 +107,12 @@ export class ContentDocRef {
       if (this.guid) {
         let doc = rootDoc.getRefDoc(this.guid)
         if (!doc) {
-          // TODO: option をいくつか引き継ぐべき
           doc = rootDoc.createRefDoc(this.guid)
+          const TypeConstructor = typeRefToConstructor[this.typeRef]
+          if (!TypeConstructor) {
+            throw new Error('Unknown typeRef: ' + this.typeRef)
+          }
+          doc.get('', TypeConstructor)
           // referrer の設定などは transaction の最後で行われる
           // なぜなら非 local な transaction 内で新しい transaction を作成する可能性があるため
         }
@@ -192,6 +197,9 @@ export class ContentDocRef {
   delete (transaction) {
     const doc = this.getDoc()
     if (doc._referrer && doc._referrer === this._item) {
+      if (transaction.rootTransaction) {
+        transaction.rootTransaction.detachedDocs.set(doc, doc._referrer)
+      }
       doc._referrer = null
     }
     if (transaction.rootTransaction) {
