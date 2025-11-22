@@ -13,7 +13,7 @@ import {
   cleanupYTextAfterTransaction,
   resolveRefConflict,
   validateCircularRef,
-  UpdateEncoderV1, UpdateEncoderV2, GC, StructStore, AbstractType, AbstractStruct, YEvent, Doc,　ContentDocRef // eslint-disable-line
+  UpdateEncoderV1, UpdateEncoderV2, GC, StructStore, AbstractType, AbstractStruct, YEvent, Doc, ContentDocRef // eslint-disable-line
 } from '../internals.js'
 
 import * as map from 'lib0/map'
@@ -42,6 +42,12 @@ export class RootTransaction {
     this.docRefsRemoved = new Set()
     /** @type {Array<YEvent<any>>} */
     this.events = []
+    /**
+     * Stores the events for the types that observe also child elements.
+     * It is mainly used by `observeDeep`.
+     * @type {Map<AbstractType<YEvent<any>>,Array<YEvent<any>>>}
+     */
+    this.changedParentTypes = new Map()
   }
 }
 
@@ -535,6 +541,7 @@ const transactInRoot = (rootDoc, f, origin = null, local = true) => {
           callRootTransactionsObservers(transaction)
           // Next, call root observers
           callRootObservers(transaction)
+          transaction.rootDoc.emit('afterRootTransaction', [transaction, transaction.rootDoc])
           // Then, Try GC And Merge
           cleanupConsumedTransaction(transaction)
           // Emit store transaction cleanup events

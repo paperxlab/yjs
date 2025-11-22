@@ -172,7 +172,7 @@ export class YEvent {
   get changes () {
     let changes = this._changes
     if (changes === null) {
-      if (this.transaction.doc._transactionCleanups.length === 0 && (this.transaction.doc.rootDoc?._rootTransactionCleanups.length ?? 0)  === 0) {
+      if (this.transaction.doc._transactionCleanups.length === 0 && (this.transaction.doc.rootDoc?._rootTransactionCleanups.length ?? 0) === 0) {
         throw error.create(errorComputeChanges)
       }
       const target = this.target

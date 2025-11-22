@@ -245,13 +245,34 @@ export const getTypeChildren = t => {
 export const callTypeObservers = (type, transaction, event) => {
   const changedType = type
   const changedParentTypes = transaction.changedParentTypes
+  /** @type {Set<string>|null} */
+  const seenDocGuids = transaction.rootTransaction ? new Set() : null
   while (true) {
     // @ts-ignore
     map.setIfUndefined(changedParentTypes, type, () => []).push(event)
-    if (type._item === null) {
+    if (transaction.rootTransaction) {
+      // @ts-ignore
+      map.setIfUndefined(transaction.rootTransaction.changedParentTypes, type, () => []).push(event)
+    }
+    const parentItem = type._item
+    if (parentItem !== null) {
+      type = /** @type {AbstractType<any>} */ (parentItem.parent)
+      continue
+    }
+    if (!transaction.rootTransaction) {
       break
     }
-    type = /** @type {AbstractType<any>} */ (type._item.parent)
+    const doc = type.doc
+    if (!doc || !doc._referrer) {
+      break
+    }
+    if (seenDocGuids && seenDocGuids.has(doc.guid)) {
+      break
+    }
+    seenDocGuids && seenDocGuids.add(doc.guid)
+    const parentType = /** @type {AbstractType<any>} */ (doc._referrer.parent)
+    // Move to parent doc scope
+    type = parentType
   }
   if (transaction.rootTransaction) {
     // @ts-ignore

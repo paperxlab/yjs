@@ -124,7 +124,12 @@ export const splitItem = (transaction, leftItem, diff) => {
  * @param {Array<StackItem>} stack
  * @param {ID} id
  */
-const isDeletedByUndoStack = (stack, id) => array.some(stack, /** @param {StackItem} s */ s => isDeleted(s.deletions, id))
+const isDeletedByUndoStack = (stack, id) => array.some(stack, /** @param {StackItem} s */ s => {
+  for (const { deletions } of s.entries.values()) {
+    if (isDeleted(deletions, id)) return true
+  }
+  return false
+})
 
 /**
  * Redoes the effect of this operation.
@@ -517,7 +522,7 @@ export class Item extends AbstractStruct {
       addStruct(transaction.doc.store, this)
       this.content.integrate(transaction, this)
       // add parent to transaction.changed
-      addChangedTypeToTransaction(transaction, /** @type {AbstractType<any>} */ (this.parent), this.parentSub)
+      addChangedTypeToTransaction(transaction, /** @type {AbstractType<any>} */(this.parent), this.parentSub)
       if ((/** @type {AbstractType<any>} */ (this.parent)._item !== null && /** @type {AbstractType<any>} */ (this.parent)._item.deleted) || (this.parentSub !== null && this.right !== null)) {
         // delete if parent is deleted or if this is not the current attribute value of parent
         this.delete(transaction)

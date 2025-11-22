@@ -192,3 +192,83 @@ export const testDocRefSyncRoundtripRestoresRefs = _tc => {
   t.assert(replicatedChildDoc && replica.refDocs.has(replicatedChildDoc.guid), 'refDoc restored on receiver')
   t.assert(replicatedChild.get(0) === 'value', 'nested content survived roundtrip')
 }
+
+/**
+ * UndoManager on parent doc captures and reverts changes inside referenced docs.
+ * @param {t.TestCase} _tc
+ */
+export const testDocRefUndoAcrossDocs = _tc => {
+  const root = new Y.Doc({ root: true, autoRef: true })
+  const parent = root.getMap('root')
+  const child = new Y.Map()
+  parent.set('child', child)
+
+  const childDoc = /** @type {Y.Doc} */ (child.doc)
+  const childRoot = childDoc.getMap('')
+
+  const um = new Y.UndoManager(parent)
+
+  childRoot.set('title', 'hello')
+  t.assert(um.canUndo(), 'undo stack tracks change in ref doc')
+
+  um.undo()
+  t.assert(childRoot.has('title') === false, 'undo removed change inside ref doc')
+
+  um.redo()
+  t.assert(childRoot.get('title') === 'hello', 'redo restored change inside ref doc')
+}
+
+/**
+ * When a single change spans multiple ref docs, UndoManager should undo/redo them together.
+ * @param {t.TestCase} _tc
+ */
+export const testDocRefUndoAcrossMultipleDocsSingleOp = _tc => {
+  const root = new Y.Doc({ root: true, autoRef: true })
+  const parent = root.getMap('root')
+  const childA = new Y.Map()
+  const childB = new Y.Map()
+  parent.set('a', childA)
+  parent.set('b', childB)
+  const aRoot = /** @type {Y.Map<any>} */ (childA.doc?.getMap(''))
+  const bRoot = /** @type {Y.Map<any>} */ (childB.doc?.getMap(''))
+
+  const um = new Y.UndoManager(parent)
+
+  // One root-level transaction that touches both ref docs
+  root.transact(() => {
+    aRoot.set('x', 1)
+    bRoot.set('y', 2)
+  })
+
+  t.assert(um.undoStack.length === 1, 'single stack item for multi-doc transaction')
+  um.undo()
+  t.assert(aRoot.has('x') === false && bRoot.has('y') === false, 'undo cleared both ref docs')
+  um.redo()
+  t.assert(aRoot.get('x') === 1 && bRoot.get('y') === 2, 'redo restored both ref docs')
+}
+
+/**
+ * Consecutive changes within captureTimeout across ref docs are merged.
+ * @param {t.TestCase} _tc
+ */
+export const testDocRefUndoAcrossDocsCaptureMerge = _tc => {
+  const root = new Y.Doc({ root: true, autoRef: true })
+  const parent = root.getMap('root')
+  const child = new Y.Map()
+  const other = new Y.Map()
+  parent.set('child', child)
+  parent.set('other', other)
+  const childRoot = /** @type {Y.Map<any>} */ (child.doc?.getMap(''))
+  const otherRoot = /** @type {Y.Map<any>} */ (other.doc?.getMap(''))
+
+  const um = new Y.UndoManager(parent, { captureTimeout: 1000 })
+
+  childRoot.set('title', 'hello')
+  otherRoot.set('note', 'world') // within capture window, should merge
+
+  t.assert(um.undoStack.length === 1, 'consecutive changes merged into one stack item')
+  um.undo()
+  t.assert(!childRoot.has('title') && !otherRoot.has('note'), 'undo removed merged changes')
+  um.redo()
+  t.assert(childRoot.get('title') === 'hello' && otherRoot.get('note') === 'world', 'redo restored merged changes')
+}
