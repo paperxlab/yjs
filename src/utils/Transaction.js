@@ -446,7 +446,7 @@ export const transact = (doc, f, origin = null, local = true) => {
   if (doc.rootDoc) {
     return transactInRoot(doc.rootDoc, (rootTr) => {
       if (doc._transaction == null) {
-        doc._transaction = new Transaction(doc, origin, local)
+        doc._transaction = new Transaction(doc, rootTr.origin, rootTr.local)
         rootTr.transactions.set(doc.guid, doc._transaction)
         doc.emit('beforeTransaction', [doc._transaction, doc])
       }

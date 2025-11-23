@@ -224,12 +224,6 @@ export const testDocRefUndoAcrossDocs = _tc => {
   t.assert(grandChild.has('note') === false, 'undo removed change inside nested ref doc')
 
   um.redo()
-  console.log('After redo:', {
-    hasNote: grandChild.has('note'),
-    noteValue: grandChild.get('note'),
-    grandChildGuid: grandChild.doc ? grandChild.doc.guid : 'no-doc',
-    grandChildKeys: Array.from(grandChild.keys())
-  })
   t.assert(grandChild.get('note') === 'world', 'redo restored change inside nested ref doc')
 }
 
@@ -286,4 +280,83 @@ export const testDocRefUndoAcrossDocsCaptureMerge = _tc => {
   t.assert(!childRoot.has('title') && !otherRoot.has('note'), 'undo removed merged changes')
   um.redo()
   t.assert(childRoot.get('title') === 'hello' && otherRoot.get('note') === 'world', 'redo restored merged changes')
+}
+
+/**
+ * UndoManager captures granular text operations in nested ref docs.
+ * @param {t.TestCase} _tc
+ */
+export const testDocRefUndoAcrossDocsWithXmlTextGranular = _tc => {
+  const root = new Y.Doc({ root: true, autoRef: true })
+  const parent = root.getMap('root')
+  const child = new Y.Map()
+  parent.set('child', child)
+
+  // captureTimeout: 0 にして、操作ごとに確実にスタックが分かれるようにする
+  const um = new Y.UndoManager(parent, { captureTimeout: 0 })
+
+  const grandChild = new Y.Map()
+  child.set('grand', grandChild)
+
+  const xmlText = new Y.XmlText()
+  grandChild.set('xml', xmlText)
+
+  // 初期状態: 'abc'
+  xmlText.insert(0, 'abc')
+
+  // ここまでの履歴は一旦無視するか、区切りを入れる
+  um.stopCapturing()
+
+  // 単体の挿入操作: 'd' を追加 -> 'abcd'
+  xmlText.insert(3, 'd')
+
+  t.assert(xmlText.toString() === 'abcd', 'text updated')
+  t.assert(um.canUndo(), 'undo available')
+
+  // Undo: 'd' が消えるはず
+  um.undo()
+  t.assert(xmlText.toString() === 'abc', 'undo removed last character')
+
+  // Redo: 'd' が戻るはず
+  um.redo()
+  t.assert(xmlText.toString() === 'abcd', 'redo restored last character')
+
+  // 単体の削除操作: 'b' を削除 -> 'acd'
+  um.stopCapturing()
+  xmlText.delete(1, 1)
+  t.assert(xmlText.toString() === 'acd', 'text deleted')
+
+  // Undo: 'b' が戻るはず -> 'abcd'
+  um.undo()
+  t.assert(xmlText.toString() === 'abcd', 'undo restored deleted character')
+
+  // Redo: 'b' が消えるはず -> 'acd'
+  um.redo()
+  t.assert(xmlText.toString() === 'acd', 'redo re-deleted character')
+}
+
+/**
+ * Nested transactions should inherit the origin from the root transaction.
+ * @param {t.TestCase} _tc
+ */
+export const testDocRefInheritsOrigin = _tc => {
+  const root = new Y.Doc({ root: true, autoRef: true })
+  const map = root.getMap('root')
+  const child = new Y.Map()
+  map.set('child', child)
+  const childDoc = child.doc
+  t.assert(childDoc, 'child doc exists')
+
+  const origin = 'custom-origin'
+  let capturedOrigin = null
+
+  childDoc.on('beforeTransaction', tr => {
+    capturedOrigin = tr.origin
+  })
+
+  root.transact(() => {
+    child.set('a', 1)
+  }, origin)
+
+  t.assert(capturedOrigin === origin, 'child doc transaction inherited origin')
 }
