@@ -12,6 +12,7 @@ import * as docRefs from './doc-ref.tests.js'
 import * as snapshot from './snapshot.tests.js'
 import * as updates from './updates.tests.js'
 import * as relativePositions from './relativePositions.tests.js'
+import * as page from './page.tests.js'
 
 import { runTests } from 'lib0/testing'
 import { isBrowser, isNode } from 'lib0/environment'
@@ -37,7 +38,8 @@ const tests = {
   docRefs,
   snapshot,
   updates,
-  relativePositions
+  relativePositions,
+  page
 }
 
 const run = async () => {

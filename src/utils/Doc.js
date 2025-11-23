@@ -34,6 +34,7 @@ export const generateNewClientId = random.uint32
  * @property {boolean} [DocOpts.shouldLoad] Whether the document should be synced by the provider now. This is toggled to true when you call ydoc.load()
  * @property {boolean} [DocOpts.autoRef=false] Whether to automatically treat embedded types as references when no explicit createRef is set.
  * @property {boolean} [DocOpts.root=true] Whether this Doc is a root entrypoint for transactions. Non-root docs receive rootDoc when integrated.
+ * @property {string|null} [DocOpts.page] Associate this document with a page.
  */
 
 /**
@@ -86,7 +87,8 @@ export class Doc extends ObservableV2 {
       autoLoad = false,
       shouldLoad = true,
       autoRef = false,
-      root = false
+      root = false,
+      page = null
     } = opts
     super()
     this.gc = gc
@@ -94,6 +96,7 @@ export class Doc extends ObservableV2 {
     this.clientID = clientID
     this.guid = guid
     this.isRoot = root
+    this.page = page
     /**
      * Root doc that owns this doc bundle (refs). Only set when root=true or when integrated.
      * @type {Doc|null}
@@ -213,7 +216,7 @@ export class Doc extends ObservableV2 {
   load () {
     const item = this._item
     if (item !== null && !this.shouldLoad) {
-      transact(/** @type {any} */ (item.parent).doc, transaction => {
+      transact(/** @type {any} */(item.parent).doc, transaction => {
         transaction.subdocsLoaded.add(this)
       }, null, true)
     }
@@ -243,8 +246,9 @@ export class Doc extends ObservableV2 {
   /**
    *
    * @param {string} [guid]
+   * @param {string|null} [page]
    */
-  createRefDoc (guid) {
+  createRefDoc (guid, page) {
     if (!this.isRoot) {
       throw new Error('createRefDoc can only be called on root documents')
     }
@@ -252,7 +256,8 @@ export class Doc extends ObservableV2 {
       guid: guid || random.uuidv4(),
       root: false,
       clientID: this.clientID,
-      autoRef: this.autoRef
+      autoRef: this.autoRef,
+      page: page
     })
     newDoc.rootDoc = this
     this.refDocs.set(newDoc.guid, newDoc)
@@ -429,7 +434,7 @@ export class Doc extends ObservableV2 {
       const content = /** @type {ContentDoc} */ (item.content)
       content.doc = new Doc({ guid: this.guid, ...content.opts, shouldLoad: false })
       content.doc._item = item
-      transact(/** @type {any} */ (item).parent.doc, transaction => {
+      transact(/** @type {any} */(item).parent.doc, transaction => {
         const doc = content.doc
         if (!item.deleted) {
           transaction.subdocsAdded.add(doc)

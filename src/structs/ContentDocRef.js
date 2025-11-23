@@ -68,14 +68,31 @@ export class ContentDocRef {
           if (doc.isRoot) {
             throw new Error('Cannot create a ContentDocRef to a root doc')
           }
-          this.guid = doc.guid
-          if (doc._referrer) {
-            // この item を削除して、ref の競合を解決する
-            resolveRefConflict(rootDoc, this)
-            return
+
+          // Check if we need to clone due to page mismatch OR conflict
+          const parentDoc = /** @type {AbstractType<any>} */ (item.parent).doc
+          const parentPage = parentDoc ? parentDoc.page : null
+
+          const isPageMismatch = doc.page !== parentPage
+          const isConflict = !!doc._referrer
+
+          if (isPageMismatch || isConflict) {
+            // Clone the doc content to a new type structure
+            const clonedType = cloneDoc(rootDoc, doc.guid)
+            // Use the cloned type instead of the original
+            this._type = clonedType
+            // Reset doc so it creates a new one
+            doc = null
+          } else {
+            this.guid = doc.guid
           }
-        } else {
-          doc = rootDoc.createRefDoc()
+        }
+
+        if (!doc) {
+          // Inherit page from parent doc
+          const parentDoc = /** @type {AbstractType<any>} */ (item.parent).doc
+          const page = parentDoc ? parentDoc.page : null
+          doc = rootDoc.createRefDoc(undefined, page)
           this.guid = doc.guid
           this._type._integrate(doc, null)
           doc.share.set('', this._type)
@@ -84,18 +101,33 @@ export class ContentDocRef {
         validateCircularRef(item)
       } else if (this.guid) {
         let doc = rootDoc.getRefDoc(this.guid)
+
+        // Check conflict
+        if (doc && doc._referrer) {
+          // Clone
+          const clonedType = cloneDoc(rootDoc, this.guid)
+
+          // Create new doc
+          const parentDoc = /** @type {AbstractType<any>} */ (item.parent).doc
+          const page = parentDoc ? parentDoc.page : null
+          doc = rootDoc.createRefDoc(undefined, page)
+
+          // Integrate
+          clonedType._integrate(doc, null)
+          doc.share.set('', clonedType)
+
+          // Update ref
+          this.guid = doc.guid
+          this._type = clonedType
+        }
+
         if (!doc) {
-          doc = rootDoc.createRefDoc(this.guid)
+          doc = rootDoc.createRefDoc(this.guid, /** @type {any} */(item.parent).doc.page)
           const TypeConstructor = typeRefToConstructor[this.typeRef]
           if (!TypeConstructor) {
             throw new Error('Unknown typeRef: ' + this.typeRef)
           }
           doc.get('', TypeConstructor)
-        }
-        if (doc._referrer) {
-          // この item を削除して、ref の競合を解決する
-          resolveRefConflict(rootDoc, this)
-          return
         }
         doc._referrer = item
         validateCircularRef(item)
@@ -107,7 +139,7 @@ export class ContentDocRef {
       if (this.guid) {
         let doc = rootDoc.getRefDoc(this.guid)
         if (!doc) {
-          doc = rootDoc.createRefDoc(this.guid)
+          doc = rootDoc.createRefDoc(this.guid, /** @type {any} */(item.parent).doc.page)
           const TypeConstructor = typeRefToConstructor[this.typeRef]
           if (!TypeConstructor) {
             throw new Error('Unknown typeRef: ' + this.typeRef)
@@ -358,26 +390,18 @@ function addUnrefToDoc (doc, ref) {
 export function resolveRefConflict (rootDoc, ref) {
   const refItem = ref._item
   if (!refItem || refItem.deleted) return
-  if (refItem.parentSub) {
-    const key = refItem.parentSub
+
+  // Clone the doc
+  const clonedType = cloneDoc(rootDoc, ref.guid)
+
+  if (refItem.parentSub !== null) {
     const map = /** @type {YMap<any>} */ (refItem.parent)
-    map.delete(key)
-    const cloned = cloneDoc(rootDoc, ref.guid)
-    map.set(key, cloned)
+    map.set(refItem.parentSub, clonedType)
   } else {
-    const array = /** @type {import('../types/YArray.js').YArray<any>} */ (refItem.parent)
-    /** @type {Item | null} */
-    let n = refItem.left
-    let index = 0
-    while (n !== null) {
-      if (!n.deleted && n.countable) {
-        index += n.length
-      }
-      n = n.left
-    }
-    array.delete(index)
-    const cloned = cloneDoc(rootDoc, ref.guid)
-    array.insert(index, [cloned])
+    const array = /** @type {YArray<any>} */ (refItem.parent)
+    const index = findIndexInArray(refItem)
+    array.delete(index, 1)
+    array.insert(index, [clonedType])
   }
 }
 
