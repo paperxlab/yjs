@@ -50,6 +50,40 @@ page.set('inline', inline)        // Deep-embedded (upstream behavior)
 - Deleting a reference: the target Doc’s `_unrefs` (`Y.Array`) receives a `ContentDocUnref`, and `doc._referrer` is cleared. This is useful for storage-side unref handling.
 - `ContentDocRef` / `ContentDocUnref` are part of the update binary, so syncing works only between this fork’s peers (not binary-compatible with upstream Yjs).
 
+### Page Property & Clone-on-Move
+
+- `Doc` instances now have a `page` property (string | null).
+- When a new reference is created, it inherits the `page` property from its parent document.
+- **Clone-on-Move**: If a referenced document is moved (re-integrated) into a parent document with a different `page` value, the referenced document is automatically **cloned**.
+  - A new `Doc` with a new GUID is created.
+  - The content is deep-copied.
+  - The reference in the new location points to this new clone.
+  - This ensures that subdocuments belonging to a specific "page" stay isolated when moved to another context.
+
+```js
+const root = new Y.Doc({ root: true, autoRef: true })
+
+// Create a page doc
+const page1 = root.getMap('page1')
+page1.doc.page = 'page-1'
+
+// Create a subdoc inside page1
+const subdoc = new Y.Map()
+page1.set('sub', subdoc)
+// subdoc.doc.page is automatically 'page-1'
+
+// Move subdoc to another page
+const page2 = root.getMap('page2')
+page2.doc.page = 'page-2'
+
+// This triggers a clone because of page mismatch ('page-1' vs 'page-2')
+page2.set('sub-copy', subdoc)
+
+const subdocCopy = page2.get('sub-copy')
+// subdocCopy.doc.guid !== subdoc.doc.guid
+// subdocCopy.doc.page === 'page-2'
+```
+
 ### Root Transaction events
 
 Root Docs expose events that bundle changes across all docs under the root:
