@@ -246,9 +246,8 @@ export class Doc extends ObservableV2 {
   /**
    *
    * @param {string} [guid]
-   * @param {string|null} [page]
    */
-  createRefDoc (guid, page) {
+  createRefDoc (guid) {
     if (!this.isRoot) {
       throw new Error('createRefDoc can only be called on root documents')
     }
@@ -256,8 +255,7 @@ export class Doc extends ObservableV2 {
       guid: guid || random.uuidv4(),
       root: false,
       clientID: this.clientID,
-      autoRef: this.autoRef,
-      page: page
+      autoRef: this.autoRef
     })
     newDoc.rootDoc = this
     this.refDocs.set(newDoc.guid, newDoc)

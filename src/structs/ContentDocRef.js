@@ -89,15 +89,15 @@ export class ContentDocRef {
         }
 
         if (!doc) {
-          // Inherit page from parent doc
-          const parentDoc = /** @type {AbstractType<any>} */ (item.parent).doc
-          const page = parentDoc ? parentDoc.page : null
-          doc = rootDoc.createRefDoc(undefined, page)
+          doc = rootDoc.createRefDoc(undefined)
           this.guid = doc.guid
           this._type._integrate(doc, null)
           doc.share.set('', this._type)
         }
         doc._referrer = item
+        if (item.parent instanceof AbstractType && item.parent.doc) {
+          doc.page = item.parent.doc.page
+        }
         validateCircularRef(item)
       } else if (this.guid) {
         let doc = rootDoc.getRefDoc(this.guid)
@@ -108,9 +108,7 @@ export class ContentDocRef {
           const clonedType = cloneDoc(rootDoc, this.guid)
 
           // Create new doc
-          const parentDoc = /** @type {AbstractType<any>} */ (item.parent).doc
-          const page = parentDoc ? parentDoc.page : null
-          doc = rootDoc.createRefDoc(undefined, page)
+          doc = rootDoc.createRefDoc(undefined)
 
           // Integrate
           clonedType._integrate(doc, null)
@@ -122,7 +120,7 @@ export class ContentDocRef {
         }
 
         if (!doc) {
-          doc = rootDoc.createRefDoc(this.guid, /** @type {any} */(item.parent).doc.page)
+          doc = rootDoc.createRefDoc(this.guid)
           const TypeConstructor = typeRefToConstructor[this.typeRef]
           if (!TypeConstructor) {
             throw new Error('Unknown typeRef: ' + this.typeRef)
@@ -130,6 +128,9 @@ export class ContentDocRef {
           doc.get('', TypeConstructor)
         }
         doc._referrer = item
+        if (item.parent instanceof AbstractType && item.parent.doc) {
+          doc.page = item.parent.doc.page
+        }
         validateCircularRef(item)
       } else {
         throw error.unexpectedCase()
@@ -139,7 +140,7 @@ export class ContentDocRef {
       if (this.guid) {
         let doc = rootDoc.getRefDoc(this.guid)
         if (!doc) {
-          doc = rootDoc.createRefDoc(this.guid, /** @type {any} */(item.parent).doc.page)
+          doc = rootDoc.createRefDoc(this.guid)
           const TypeConstructor = typeRefToConstructor[this.typeRef]
           if (!TypeConstructor) {
             throw new Error('Unknown typeRef: ' + this.typeRef)

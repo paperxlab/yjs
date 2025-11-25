@@ -538,7 +538,9 @@ const transactInRoot = (rootDoc, f, origin = null, local = true) => {
           })
 
           // Resolve block refs
-          resolveDocRefs(transaction)
+          if (!transaction.local) {
+            resolveDocRefs(transaction)
+          }
           // At first, call all transaction observers.
           callRootTransactionsObservers(transaction)
           // Next, call root observers
@@ -578,6 +580,9 @@ const resolveDocRefs = (rootTransaction) => {
       }
     }
     doc._referrer = ref._item
+    if (ref._item && ref._item.parent instanceof AbstractType && ref._item.parent.doc) {
+      doc.page = ref._item.parent.doc.page
+    }
     validateCircularRef(/** @type {Item & { content: ContentDocRef }} */(ref._item))
   })
 }
