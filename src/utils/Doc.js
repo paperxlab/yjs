@@ -34,7 +34,6 @@ export const generateNewClientId = random.uint32
  * @property {boolean} [DocOpts.shouldLoad] Whether the document should be synced by the provider now. This is toggled to true when you call ydoc.load()
  * @property {boolean} [DocOpts.autoRef=false] Whether to automatically treat embedded types as references when no explicit createRef is set.
  * @property {boolean} [DocOpts.root=true] Whether this Doc is a root entrypoint for transactions. Non-root docs receive rootDoc when integrated.
- * @property {string|null} [DocOpts.page] Associate this document with a page.
  */
 
 /**
@@ -87,8 +86,7 @@ export class Doc extends ObservableV2 {
       autoLoad = false,
       shouldLoad = true,
       autoRef = false,
-      root = false,
-      page = null
+      root = false
     } = opts
     super()
     this.gc = gc
@@ -96,7 +94,6 @@ export class Doc extends ObservableV2 {
     this.clientID = clientID
     this.guid = guid
     this.isRoot = root
-    this.page = page
     /**
      * Root doc that owns this doc bundle (refs). Only set when root=true or when integrated.
      * @type {Doc|null}
@@ -260,6 +257,28 @@ export class Doc extends ObservableV2 {
     newDoc.rootDoc = this
     this.refDocs.set(newDoc.guid, newDoc)
     return newDoc
+  }
+
+  /**
+   * @return {string|null}
+   */
+  get page () {
+    const pageArr = this.getArray('_page')
+    if (pageArr.length === 0) {
+      return null
+    }
+    const page = pageArr.get(0)
+    return page
+  }
+
+  /**
+   * @param {string} value
+   */
+  setPage (value) {
+    const pageArr = this.getArray('_page')
+    if (pageArr.length === 0) {
+      pageArr.push([value])
+    }
   }
 
   /**

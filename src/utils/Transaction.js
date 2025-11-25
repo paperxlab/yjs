@@ -580,9 +580,6 @@ const resolveDocRefs = (rootTransaction) => {
       }
     }
     doc._referrer = ref._item
-    if (ref._item && ref._item.parent instanceof AbstractType && ref._item.parent.doc) {
-      doc.page = ref._item.parent.doc.page
-    }
     validateCircularRef(/** @type {Item & { content: ContentDocRef }} */(ref._item))
   })
 }

@@ -16,7 +16,7 @@ export const testPageInheritance = /** @param {t.TestCase} tc */ tc => {
   t.assert(docB.page === null) // Inherited from root (null)
 
   // Set page on docB
-  docB.page = 'page1'
+  docB.setPage('page1')
 
   // Create a nested doc (mapC) inside mapB
   const mapC = new Y.Map()
@@ -44,7 +44,7 @@ export const testPageCloneOnMove = /** @param {t.TestCase} tc */ tc => {
     t.fail('docRefA is null')
     return
   }
-  docRefA.page = 'pageA'
+  docRefA.setPage('pageA')
 
   const mapContainerB = new Y.Map()
   mapA.set('containerB', mapContainerB)
@@ -53,7 +53,7 @@ export const testPageCloneOnMove = /** @param {t.TestCase} tc */ tc => {
     t.fail('docRefB is null')
     return
   }
-  docRefB.page = 'pageB'
+  docRefB.setPage('pageB')
 
   // Create item in Page A
   const itemMap = new Y.Map()

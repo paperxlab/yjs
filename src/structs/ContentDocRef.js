@@ -75,6 +75,13 @@ export class ContentDocRef {
 
           const isPageMismatch = doc.page !== parentPage
           const isConflict = !!doc._referrer
+          if (isPageMismatch) {
+            console.warn('ContentDocRef: page mismatch detected. Cloning the referenced doc.', {
+              refGuid: this.guid,
+              refDocPage: doc.page,
+              parentDocPage: parentPage
+            })
+          }
 
           if (isPageMismatch || isConflict) {
             // Clone the doc content to a new type structure
@@ -95,8 +102,8 @@ export class ContentDocRef {
           doc.share.set('', this._type)
         }
         doc._referrer = item
-        if (item.parent instanceof AbstractType && item.parent.doc) {
-          doc.page = item.parent.doc.page
+        if (item.parent instanceof AbstractType && item.parent.doc && item.parent.doc.page) {
+          doc.setPage(item.parent.doc.page)
         }
         validateCircularRef(item)
       } else if (this.guid) {
@@ -128,8 +135,8 @@ export class ContentDocRef {
           doc.get('', TypeConstructor)
         }
         doc._referrer = item
-        if (item.parent instanceof AbstractType && item.parent.doc) {
-          doc.page = item.parent.doc.page
+        if (item.parent instanceof AbstractType && item.parent.doc && item.parent.doc.page) {
+          doc.setPage(item.parent.doc.page)
         }
         validateCircularRef(item)
       } else {
