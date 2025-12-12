@@ -811,3 +811,37 @@ export const testUndoDoingStackItem = async (_tc) => {
   t.compare(metaRedo, '42', 'currStackItem is accessible while redoing')
   t.compare(undoManager.currStackItem, null, 'currStackItem is null after observe/transaction')
 }
+
+/**
+ * @param {t.TestCase} tc
+ */
+export const testUndoRedoRefWithContent = tc => {
+  const doc = new Y.Doc({ root: true, autoRef: true })
+  const array = doc.getArray('test')
+  const undoManager = new Y.UndoManager(array)
+
+  // 1. Add a ref doc with initial content
+  const subMap = new Y.Map()
+  subMap.set('content', 'initial content')
+
+  array.push([subMap])
+
+  // Ensure the ref doc is loaded and content is there
+  const refDoc = array.get(0).doc
+  t.assert(refDoc, 'ref doc should exist')
+  t.assert(refDoc.getMap('').get('content') === 'initial content', 'content should be present')
+
+  // 2. Undo the addition
+  undoManager.undo()
+  t.assert(array.length === 0, 'array should be empty after undo')
+
+  // 3. Redo the addition
+  undoManager.redo()
+  t.assert(array.length === 1, 'array should have 1 element after redo')
+
+  const redoneSubMap = array.get(0)
+  const redoneRefDoc = redoneSubMap.doc
+  t.assert(redoneRefDoc, 'redone ref doc should exist')
+
+  t.assert(redoneRefDoc.getMap('').get('content') === 'initial content', 'content should be restored after redo')
+}

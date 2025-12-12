@@ -21,12 +21,21 @@ import { ObservableV2 } from 'lib0/observable'
 export class StackItem {
   /**
    * @param {Map<Doc, { deletions: DeleteSet, insertions: DeleteSet }>} entries
+   * @param {Map<Doc, Item>|null} [detachedDocs]
    */
-  constructor (entries) {
+  constructor (entries, detachedDocs = null) {
     /**
      * @type {Map<Doc, { deletions: DeleteSet, insertions: DeleteSet }>}
      */
     this.entries = entries
+    /**
+     * Snapshot of docs detached within the transaction that produced this StackItem.
+     * This is used to sort undo/redo operations deterministically even when docs are
+     * currently detached (doc._referrer is null).
+     *
+     * @type {Map<Doc, Item>|null}
+     */
+    this.detachedDocs = detachedDocs
     /**
      * Use this to save and restore metadata like selection range
      */
@@ -38,12 +47,25 @@ export class StackItem {
  * @param {Doc} docA
  * @param {Doc} docB
  */
-const isDocAncestor = (docA, docB) => {
+/**
+ * @param {Doc} docA
+ * @param {Doc} docB
+ * @param {Map<Doc, Item>|null} [detachedDocs]
+ */
+const isDocAncestor = (docA, docB, detachedDocs = null) => {
   let n = docB
+  /** @type {Set<string>} */
+  const visitedGuids = new Set()
   while (n) {
     if (n === docA) return true
-    if (!n._referrer) break
-    n = /** @type {AbstractType<any>} */ (n._referrer.parent).doc || /** @type {any} */ (null)
+    if (visitedGuids.has(n.guid)) break
+    visitedGuids.add(n.guid)
+    let referrer = n._referrer
+    if (!referrer && detachedDocs && detachedDocs.has(n)) {
+      referrer = /** @type {any} */ (detachedDocs.get(n))
+    }
+    if (!referrer) break
+    n = /** @type {AbstractType<any>} */ (referrer.parent).doc || /** @type {any} */ (null)
   }
   return false
 }
@@ -84,21 +106,24 @@ const popStackItem = (undoManager, stack, eventType) => {
       const stackItem = /** @type {StackItem} */ (stack.pop())
       let performedChange = false
       const entries = Array.from(stackItem.entries.entries())
-      // We always process the stack item in reverse order of how it was constructed.
-      // For Undo: The stack item was constructed in forward order (child, grandChild). We want to undo grandChild then child. So reverse.
-      // For Redo: The stack item was constructed during Undo, which executed grandChild then child. So it contains (grandChild, child). We want to redo child then grandChild. So reverse.
-      if (eventType === 'redo') {
-        entries.reverse()
-      } else {
-        // sort entries by their depth in the document tree
-        // this is necessary because we want to undo changes in the child document before we undo changes in the parent document
-        // otherwise the child document might not exist anymore when we try to undo changes in it
-        entries.sort((a, b) => {
-          if (a[0] === b[0]) return 0
-          if (isDocAncestor(a[0], b[0])) return 1
-          return -1
-        })
-      }
+      // Process entries based on their depth in the refDoc tree.
+      // - Undo: apply children first (descendant -> ancestor), because a child doc might be detached when the parent ref is removed.
+      // - Redo: apply parents first (ancestor -> descendant), because restoring a ContentDocRef first re-attaches the child doc
+      //         (doc._referrer), which makes subsequent child-doc redo operations fall within scope.
+      entries.sort((a, b) => {
+        if (a[0] === b[0]) return 0
+        const detachedDocs = stackItem.detachedDocs
+        const aIsAncestorOfB = isDocAncestor(a[0], b[0], detachedDocs)
+        const bIsAncestorOfA = isDocAncestor(b[0], a[0], detachedDocs)
+        if (!aIsAncestorOfB && !bIsAncestorOfA) {
+          return 0
+        }
+        // For undo, descendants first. For redo, ancestors first.
+        if (eventType === 'redo') {
+          return aIsAncestorOfB ? -1 : 1
+        }
+        return aIsAncestorOfB ? 1 : -1
+      })
       entries.forEach(([doc, { insertions, deletions }]) => {
         transact(doc, transaction => {
           const store = doc.store
@@ -224,6 +249,9 @@ const addToUndoStack = (undoManager, transactions, origin) => {
 
   const now = time.getUnixTime()
   let didAdd = false
+  const rootDetachedDocs = transactions.length > 0 && transactions[0].rootTransaction
+    ? transactions[0].rootTransaction.detachedDocs
+    : null
   if (undoManager.lastChange > 0 && now - undoManager.lastChange < undoManager.captureTimeout && stack.length > 0 && !undoing && !redoing) {
     // append change to last stack op
     const lastOp = stack[stack.length - 1]
@@ -236,9 +264,19 @@ const addToUndoStack = (undoManager, transactions, origin) => {
         lastOp.entries.set(doc, { deletions, insertions })
       }
     })
+    if (rootDetachedDocs) {
+      if (lastOp.detachedDocs == null) {
+        lastOp.detachedDocs = new Map(rootDetachedDocs)
+      } else {
+        const dd = /** @type {Map<Doc, Item>} */ (lastOp.detachedDocs)
+        rootDetachedDocs.forEach((item, doc) => {
+          dd.set(doc, item)
+        })
+      }
+    }
   } else {
     // create a new stack op
-    stack.push(new StackItem(entries))
+    stack.push(new StackItem(entries, rootDetachedDocs ? new Map(rootDetachedDocs) : null))
     didAdd = true
   }
   if (!undoing && !redoing) {
