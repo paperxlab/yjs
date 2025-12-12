@@ -3,6 +3,7 @@
 export {
   Doc,
   Transaction,
+  RootTransaction,
   YArray as Array,
   YMap as Map,
   YText as Text,
@@ -28,6 +29,8 @@ export {
   ContentAny,
   ContentString,
   ContentType,
+  ContentDocRef,
+  ContentDocUnref,
   AbstractType,
   getTypeChildren,
   createRelativePositionFromTypeIndex,

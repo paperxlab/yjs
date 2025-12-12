@@ -20,28 +20,126 @@ import { ObservableV2 } from 'lib0/observable'
 
 export class StackItem {
   /**
-   * @param {DeleteSet} deletions
-   * @param {DeleteSet} insertions
+   * @param {Map<Doc, { deletions: DeleteSet, insertions: DeleteSet }>} entries
+   * @param {Map<string, string|null>|null} [docParentGuids]
    */
-  constructor (deletions, insertions) {
-    this.insertions = insertions
-    this.deletions = deletions
+  constructor (entries, docParentGuids = null) {
+    /**
+     * @type {Map<Doc, { deletions: DeleteSet, insertions: DeleteSet }>}
+     */
+    this.entries = entries
+    /**
+     * Snapshot of the refDoc graph at the time this StackItem was created.
+     *
+     * Key: doc.guid, Value: parent doc guid (or null for root / unattached).
+     *
+     * We store this because redo/undo ordering depends on doc ancestry, but during
+     * undo some docs become detached (doc._referrer === null), which would otherwise
+     * make the ancestry information unavailable.
+     *
+     * @type {Map<string, string|null>|null}
+     */
+    this.docParentGuids = docParentGuids
     /**
      * Use this to save and restore metadata like selection range
      */
     this.meta = new Map()
   }
 }
+
+/**
+ * @param {Map<Doc, { deletions: DeleteSet, insertions: DeleteSet }>} entries
+ * @param {Map<Doc, Item>|null} detachedDocs
+ * @return {Map<string, string|null>}
+ */
+const computeDocParentGuids = (entries, detachedDocs) => {
+  /** @type {Set<Doc>} */
+  const docs = new Set(entries.keys())
+  if (detachedDocs) {
+    detachedDocs.forEach((_item, doc) => docs.add(doc))
+  }
+
+  /** @type {Map<string, string|null>} */
+  const parentByGuid = new Map()
+  docs.forEach(doc => {
+    let referrer = doc._referrer
+    if (!referrer && detachedDocs && detachedDocs.has(doc)) {
+      referrer = /** @type {any} */ (detachedDocs.get(doc))
+    }
+    const parentDoc = referrer
+      ? (/** @type {AbstractType<any>} */ (referrer.parent).doc || null)
+      : null
+    parentByGuid.set(doc.guid, parentDoc ? parentDoc.guid : null)
+  })
+  return parentByGuid
+}
+
+/**
+ * @param {Map<string, string|null>|null} docParentGuids
+ * @param {Iterable<string>} docGuids
+ * @return {Map<string, number>}
+ */
+const computeDocGuidDepths = (docParentGuids, docGuids) => {
+  /** @type {Map<string, number>} */
+  const depths = new Map()
+  /**
+   * @param {string} guid
+   * @return {number}
+   */
+  const getDepth = guid => {
+    const cached = depths.get(guid)
+    if (cached !== undefined) return cached
+    if (!docParentGuids) {
+      depths.set(guid, 0)
+      return 0
+    }
+    /** @type {Set<string>} */
+    const visited = new Set()
+    let depth = 0
+    let nGuid = guid
+    while (true) {
+      if (visited.has(nGuid)) {
+        // cycle - treat as root
+        depth = 0
+        break
+      }
+      visited.add(nGuid)
+      const parentGuid = docParentGuids.get(nGuid) || null
+      if (!parentGuid) {
+        break
+      }
+      const parentCached = depths.get(parentGuid)
+      if (parentCached !== undefined) {
+        depth += parentCached + 1
+        break
+      }
+      depth++
+      nGuid = parentGuid
+    }
+    depths.set(guid, depth)
+    return depth
+  }
+
+  for (const guid of docGuids) {
+    getDepth(guid)
+  }
+  return depths
+}
+
 /**
  * @param {Transaction} tr
  * @param {UndoManager} um
  * @param {StackItem} stackItem
  */
 const clearUndoManagerStackItem = (tr, um, stackItem) => {
-  iterateDeletedStructs(tr, stackItem.deletions, item => {
-    if (item instanceof Item && um.scope.some(type => type === tr.doc || isParentOf(/** @type {AbstractType<any>} */ (type), item))) {
-      keepItem(item, false)
-    }
+  stackItem.entries.forEach(({ deletions }, doc) => {
+    transact(doc, transaction => {
+      iterateDeletedStructs(transaction, deletions, item => {
+        if (item instanceof Item && um.scope.some(type => type === transaction.doc || isParentOf(/** @type {AbstractType<any>} */(type), item, true))) {
+          keepItem(item, false)
+        }
+      })
+    })
   })
 }
 
@@ -54,77 +152,216 @@ const clearUndoManagerStackItem = (tr, um, stackItem) => {
 const popStackItem = (undoManager, stack, eventType) => {
   /**
    * Keep a reference to the transaction so we can fire the event with the changedParentTypes
-   * @type {any}
+   * @type {Transaction?}
    */
   let _tr = null
   const doc = undoManager.doc
   const scope = undoManager.scope
-  transact(doc, transaction => {
+  transact(doc, mainTransaction => {
     while (stack.length > 0 && undoManager.currStackItem === null) {
-      const store = doc.store
       const stackItem = /** @type {StackItem} */ (stack.pop())
-      /**
-       * @type {Set<Item>}
-       */
-      const itemsToRedo = new Set()
-      /**
-       * @type {Array<Item>}
-       */
-      const itemsToDelete = []
       let performedChange = false
-      iterateDeletedStructs(transaction, stackItem.insertions, struct => {
-        if (struct instanceof Item) {
-          if (struct.redone !== null) {
-            let { item, diff } = followRedone(store, struct.id)
-            if (diff > 0) {
-              item = getItemCleanStart(transaction, createID(item.id.client, item.id.clock + diff))
+      const entries = Array.from(stackItem.entries.entries())
+      const depthByGuid = computeDocGuidDepths(stackItem.docParentGuids, entries.map(([d]) => d.guid))
+      // Process entries based on their depth in the refDoc tree.
+      // - Undo: apply children first (descendant -> ancestor), because a child doc might be detached when the parent ref is removed.
+      // - Redo: apply parents first (ancestor -> descendant), because restoring a ContentDocRef first re-attaches the child doc
+      //         (doc._referrer), which makes subsequent child-doc redo operations fall within scope.
+      entries.sort((a, b) => {
+        if (a[0] === b[0]) return 0
+        const aDepth = depthByGuid.get(a[0].guid) || 0
+        const bDepth = depthByGuid.get(b[0].guid) || 0
+        if (aDepth !== bDepth) {
+          // For undo, descendants first. For redo, ancestors first.
+          return eventType === 'redo' ? aDepth - bDepth : bDepth - aDepth
+        }
+        // Deterministic tie-breaker for unrelated docs / siblings.
+        return a[0].guid < b[0].guid ? -1 : 1
+      })
+      entries.forEach(([doc, { insertions, deletions }]) => {
+        transact(doc, transaction => {
+          const store = doc.store
+          const detachedDocs = transaction.rootTransaction ? transaction.rootTransaction.detachedDocs : null
+          /**
+           * @type {Set<Item>}
+           */
+          const itemsToRedo = new Set()
+          /**
+           * @type {Array<Item>}
+           */
+          const itemsToDelete = []
+          iterateDeletedStructs(transaction, insertions, struct => {
+            if (struct instanceof Item) {
+              if (struct.redone !== null) {
+                let { item, diff } = followRedone(store, struct.id)
+                if (diff > 0) {
+                  item = getItemCleanStart(transaction, createID(item.id.client, item.id.clock + diff))
+                }
+                struct = item
+              }
+              if (!struct.deleted && scope.some(type => type === transaction.doc || isParentOf(/** @type {AbstractType<any>} */(type), /** @type {Item} */(struct), true, detachedDocs))) {
+                itemsToDelete.push(struct)
+              }
             }
-            struct = item
+          })
+          iterateDeletedStructs(transaction, deletions, struct => {
+            if (
+              struct instanceof Item &&
+              scope.some(type => type === transaction.doc || isParentOf(/** @type {AbstractType<any>} */(type), struct, true, detachedDocs)) &&
+              // Never redo structs in stackItem.insertions because they were created and deleted in the same capture interval.
+              !isDeleted(insertions, struct.id)
+            ) {
+              itemsToRedo.add(struct)
+            }
+          })
+          itemsToRedo.forEach(struct => {
+            const res = redoItem(transaction, struct, itemsToRedo, insertions, undoManager.ignoreRemoteMapChanges, undoManager)
+            performedChange = res !== null || performedChange
+          })
+          // We want to delete in reverse order so that children are deleted before
+          // parents, so we have more information available when items are filtered.
+          for (let i = itemsToDelete.length - 1; i >= 0; i--) {
+            const item = itemsToDelete[i]
+            if (undoManager.deleteFilter(item)) {
+              item.delete(transaction)
+              performedChange = true
+            }
           }
-          if (!struct.deleted && scope.some(type => type === transaction.doc || isParentOf(/** @type {AbstractType<any>} */ (type), /** @type {Item} */ (struct)))) {
-            itemsToDelete.push(struct)
-          }
-        }
+        })
       })
-      iterateDeletedStructs(transaction, stackItem.deletions, struct => {
-        if (
-          struct instanceof Item &&
-          scope.some(type => type === transaction.doc || isParentOf(/** @type {AbstractType<any>} */ (type), struct)) &&
-          // Never redo structs in stackItem.insertions because they were created and deleted in the same capture interval.
-          !isDeleted(stackItem.insertions, struct.id)
-        ) {
-          itemsToRedo.add(struct)
-        }
-      })
-      itemsToRedo.forEach(struct => {
-        performedChange = redoItem(transaction, struct, itemsToRedo, stackItem.insertions, undoManager.ignoreRemoteMapChanges, undoManager) !== null || performedChange
-      })
-      // We want to delete in reverse order so that children are deleted before
-      // parents, so we have more information available when items are filtered.
-      for (let i = itemsToDelete.length - 1; i >= 0; i--) {
-        const item = itemsToDelete[i]
-        if (undoManager.deleteFilter(item)) {
-          item.delete(transaction)
-          performedChange = true
-        }
-      }
       undoManager.currStackItem = performedChange ? stackItem : null
     }
-    transaction.changed.forEach((subProps, type) => {
-      // destroy search marker if necessary
-      if (subProps.has(null) && type._searchMarker) {
-        type._searchMarker.length = 0
+    if (mainTransaction.rootTransaction) {
+      for (const tr of mainTransaction.rootTransaction.transactions.values()) {
+        tr.changed.forEach((subProps, type) => {
+          if (subProps.has(null) && type._searchMarker) {
+            type._searchMarker.length = 0
+          }
+        })
       }
-    })
-    _tr = transaction
+    } else {
+      mainTransaction.changed.forEach((subProps, type) => {
+        // destroy search marker if necessary
+        if (subProps.has(null) && type._searchMarker) {
+          type._searchMarker.length = 0
+        }
+      })
+    }
+    _tr = mainTransaction
   }, undoManager)
   const res = undoManager.currStackItem
-  if (res != null) {
-    const changedParentTypes = _tr.changedParentTypes
-    undoManager.emit('stack-item-popped', [{ stackItem: res, type: eventType, changedParentTypes, origin: undoManager }, undoManager])
+  if (res != null && _tr != null) {
+    undoManager.emit('stack-item-popped', [{ stackItem: res, type: eventType, changedParentTypes: /** @type {Transaction} */ (_tr).changedParentTypes, origin: undoManager }, undoManager])
     undoManager.currStackItem = null
   }
   return res
+}
+
+/**
+ * @param {UndoManager} undoManager
+ * @param {Array<Transaction>} transactions
+ * @param {any} origin
+ */
+const addToUndoStack = (undoManager, transactions, origin) => {
+  // Only track certain transactions
+  const relevantTransactions = transactions.filter(transaction =>
+    undoManager.captureTransaction(transaction) &&
+    undoManager.scope.some(type =>
+      transaction.changedParentTypes.has(/** @type {AbstractType<any>} */(type)) ||
+      (transaction.rootTransaction && transaction.rootTransaction.changedParentTypes.has(/** @type {AbstractType<any>} */(type))) ||
+      type === transaction.doc
+    ) &&
+    (undoManager.trackedOrigins.has(transaction.origin) || (transaction.origin && undoManager.trackedOrigins.has(transaction.origin.constructor)))
+  )
+
+  if (relevantTransactions.length === 0) {
+    return
+  }
+
+  const undoing = undoManager.undoing
+  const redoing = undoManager.redoing
+  const stack = undoing ? undoManager.redoStack : undoManager.undoStack
+  if (undoing) {
+    undoManager.stopCapturing() // next undo should not be appended to last stack item
+  } else if (!redoing) {
+    // neither undoing nor redoing: delete redoStack
+    undoManager.clear(false, true)
+  }
+
+  const entries = new Map()
+  relevantTransactions.forEach(transaction => {
+    const insertions = new DeleteSet()
+    transaction.afterState.forEach((endClock, client) => {
+      const startClock = transaction.beforeState.get(client) || 0
+      const len = endClock - startClock
+      if (len > 0) {
+        addToDeleteSet(insertions, client, startClock, len)
+      }
+    })
+    entries.set(transaction.doc, { deletions: transaction.deleteSet, insertions })
+  })
+
+  const now = time.getUnixTime()
+  let didAdd = false
+  const rootDetachedDocs = transactions.length > 0 && transactions[0].rootTransaction
+    ? transactions[0].rootTransaction.detachedDocs
+    : null
+  const docParentGuids = computeDocParentGuids(entries, rootDetachedDocs)
+  if (undoManager.lastChange > 0 && now - undoManager.lastChange < undoManager.captureTimeout && stack.length > 0 && !undoing && !redoing) {
+    // append change to last stack op
+    const lastOp = stack[stack.length - 1]
+    entries.forEach(({ deletions, insertions }, doc) => {
+      const entry = lastOp.entries.get(doc)
+      if (entry) {
+        entry.deletions = mergeDeleteSets([entry.deletions, deletions])
+        entry.insertions = mergeDeleteSets([entry.insertions, insertions])
+      } else {
+        lastOp.entries.set(doc, { deletions, insertions })
+      }
+    })
+    if (lastOp.docParentGuids == null) {
+      lastOp.docParentGuids = new Map(docParentGuids)
+    } else {
+      const parents = /** @type {Map<string, string|null>} */ (lastOp.docParentGuids)
+      docParentGuids.forEach((parentGuid, guid) => {
+        parents.set(guid, parentGuid)
+      })
+    }
+  } else {
+    // create a new stack op
+    stack.push(new StackItem(entries, docParentGuids))
+    didAdd = true
+  }
+  if (!undoing && !redoing) {
+    undoManager.lastChange = now
+  }
+
+  // make sure that deleted structs are not gc'd
+  relevantTransactions.forEach(transaction => {
+    const detachedDocs = transaction.rootTransaction ? transaction.rootTransaction.detachedDocs : null
+    iterateDeletedStructs(transaction, transaction.deleteSet, /** @param {Item|GC} item */ item => {
+      if (item instanceof Item && undoManager.scope.some(type => type === transaction.doc || isParentOf(/** @type {AbstractType<any>} */(type), item, true, detachedDocs))) {
+        keepItem(item, true)
+      }
+    })
+  })
+
+  const changedParentTypes = new Map()
+  relevantTransactions.forEach(tr => {
+    tr.changedParentTypes.forEach((events, type) => {
+      changedParentTypes.set(type, events)
+    })
+  })
+
+  /**
+   * @type {[StackItemEvent, UndoManager]}
+   */
+  const changeEvent = [{ stackItem: stack[stack.length - 1], origin, type: undoing ? 'redo' : 'undo', changedParentTypes }, undoManager]
+  if (didAdd) {
+    undoManager.emit('stack-item-added', changeEvent)
+  } else {
+    undoManager.emit('stack-item-updated', changeEvent)
+  }
 }
 
 /**
@@ -209,63 +446,21 @@ export class UndoManager extends ObservableV2 {
      * @param {Transaction} transaction
      */
     this.afterTransactionHandler = transaction => {
-      // Only track certain transactions
-      if (
-        !this.captureTransaction(transaction) ||
-        !this.scope.some(type => transaction.changedParentTypes.has(/** @type {AbstractType<any>} */ (type)) || type === this.doc) ||
-        (!this.trackedOrigins.has(transaction.origin) && (!transaction.origin || !this.trackedOrigins.has(transaction.origin.constructor)))
-      ) {
-        return
-      }
-      const undoing = this.undoing
-      const redoing = this.redoing
-      const stack = undoing ? this.redoStack : this.undoStack
-      if (undoing) {
-        this.stopCapturing() // next undo should not be appended to last stack item
-      } else if (!redoing) {
-        // neither undoing nor redoing: delete redoStack
-        this.clear(false, true)
-      }
-      const insertions = new DeleteSet()
-      transaction.afterState.forEach((endClock, client) => {
-        const startClock = transaction.beforeState.get(client) || 0
-        const len = endClock - startClock
-        if (len > 0) {
-          addToDeleteSet(insertions, client, startClock, len)
-        }
-      })
-      const now = time.getUnixTime()
-      let didAdd = false
-      if (this.lastChange > 0 && now - this.lastChange < this.captureTimeout && stack.length > 0 && !undoing && !redoing) {
-        // append change to last stack op
-        const lastOp = stack[stack.length - 1]
-        lastOp.deletions = mergeDeleteSets([lastOp.deletions, transaction.deleteSet])
-        lastOp.insertions = mergeDeleteSets([lastOp.insertions, insertions])
-      } else {
-        // create a new stack op
-        stack.push(new StackItem(transaction.deleteSet, insertions))
-        didAdd = true
-      }
-      if (!undoing && !redoing) {
-        this.lastChange = now
-      }
-      // make sure that deleted structs are not gc'd
-      iterateDeletedStructs(transaction, transaction.deleteSet, /** @param {Item|GC} item */ item => {
-        if (item instanceof Item && this.scope.some(type => type === transaction.doc || isParentOf(/** @type {AbstractType<any>} */ (type), item))) {
-          keepItem(item, true)
-        }
-      })
-      /**
-       * @type {[StackItemEvent, UndoManager]}
-       */
-      const changeEvent = [{ stackItem: stack[stack.length - 1], origin: transaction.origin, type: undoing ? 'redo' : 'undo', changedParentTypes: transaction.changedParentTypes }, this]
-      if (didAdd) {
-        this.emit('stack-item-added', changeEvent)
-      } else {
-        this.emit('stack-item-updated', changeEvent)
-      }
+      addToUndoStack(this, [transaction], transaction.origin)
     }
-    this.doc.on('afterTransaction', this.afterTransactionHandler)
+
+    /**
+     * @param {import('./Transaction.js').RootTransaction} rootTransaction
+     */
+    this.afterRootTransactionHandler = rootTransaction => {
+      addToUndoStack(this, Array.from(rootTransaction.transactions.values()), rootTransaction.origin)
+    }
+
+    if (this.doc.rootDoc) {
+      this.doc.rootDoc.on('afterRootTransaction', this.afterRootTransactionHandler)
+    } else {
+      this.doc.on('afterTransaction', this.afterTransactionHandler)
+    }
     this.doc.on('destroy', () => {
       this.destroy()
     })
@@ -395,6 +590,9 @@ export class UndoManager extends ObservableV2 {
   destroy () {
     this.trackedOrigins.delete(this)
     this.doc.off('afterTransaction', this.afterTransactionHandler)
+    if (this.doc.rootDoc && this.afterRootTransactionHandler) {
+      this.doc.rootDoc.off('afterRootTransaction', this.afterRootTransactionHandler)
+    }
     super.destroy()
   }
 }

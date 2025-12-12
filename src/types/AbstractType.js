@@ -10,6 +10,8 @@ import {
   ContentAny,
   ContentBinary,
   getItemCleanStart,
+  ContentDocRef,
+  ContentDocUnref,
   ContentDoc, YText, YArray, UpdateEncoderV1, UpdateEncoderV2, Doc, Snapshot, Transaction, EventHandler, YEvent, Item, // eslint-disable-line
 } from '../internals.js'
 
@@ -243,13 +245,40 @@ export const getTypeChildren = t => {
 export const callTypeObservers = (type, transaction, event) => {
   const changedType = type
   const changedParentTypes = transaction.changedParentTypes
+  /** @type {Set<string>|null} */
+  const seenDocGuids = transaction.rootTransaction ? new Set() : null
   while (true) {
-    // @ts-ignore
-    map.setIfUndefined(changedParentTypes, type, () => []).push(event)
-    if (type._item === null) {
+    if (type.doc === transaction.doc) {
+      // @ts-ignore
+      map.setIfUndefined(changedParentTypes, type, () => []).push(event)
+    }
+    if (transaction.rootTransaction) {
+      // @ts-ignore
+      map.setIfUndefined(transaction.rootTransaction.changedParentTypes, type, () => []).push(event)
+    }
+    const parentItem = type._item
+    if (parentItem !== null) {
+      type = /** @type {AbstractType<any>} */ (parentItem.parent)
+      continue
+    }
+    if (!transaction.rootTransaction) {
       break
     }
-    type = /** @type {AbstractType<any>} */ (type._item.parent)
+    const doc = type.doc
+    if (!doc || !doc._referrer) {
+      break
+    }
+    if (seenDocGuids && seenDocGuids.has(doc.guid)) {
+      break
+    }
+    seenDocGuids && seenDocGuids.add(doc.guid)
+    const parentType = /** @type {AbstractType<any>} */ (doc._referrer.parent)
+    // Move to parent doc scope
+    type = parentType
+  }
+  if (transaction.rootTransaction) {
+    // @ts-ignore
+    transaction.rootTransaction.events.push(event)
   }
   callEventHandlerListeners(changedType._eH, event, transaction)
 }
@@ -291,6 +320,12 @@ export class AbstractType {
      * @type {null | Array<ArraySearchMarker>}
      */
     this._searchMarker = null
+
+    /**
+     * Hint to embed this type as a reference instead of deep content.
+     * @type {boolean|undefined}
+     */
+    this.createRef = undefined
   }
 
   /**
@@ -683,9 +718,17 @@ export const typeListInsertGenericsAfter = (transaction, parent, referenceItem, 
               left = new Item(createID(ownClientId, getState(store, ownClientId)), left, left && left.lastId, right, right && right.id, parent, null, new ContentDoc(/** @type {Doc} */ (c)))
               left.integrate(transaction, 0)
               break
+            case ContentDocUnref:
+              left = new Item(createID(ownClientId, getState(store, ownClientId)), left, left && left.lastId, right, right && right.id, parent, null, /** @type {ContentDocUnref} */ (c))
+              left.integrate(transaction, 0)
+              break
             default:
               if (c instanceof AbstractType) {
-                left = new Item(createID(ownClientId, getState(store, ownClientId)), left, left && left.lastId, right, right && right.id, parent, null, new ContentType(c))
+                if (c.createRef ?? parent.doc?.autoRef) {
+                  left = new Item(createID(ownClientId, getState(store, ownClientId)), left, left && left.lastId, right, right && right.id, parent, null, new ContentDocRef(c))
+                } else {
+                  left = new Item(createID(ownClientId, getState(store, ownClientId)), left, left && left.lastId, right, right && right.id, parent, null, new ContentType(c))
+                }
                 left.integrate(transaction, 0)
               } else {
                 throw new Error('Unexpected content type in insert operation')
@@ -869,7 +912,11 @@ export const typeMapSet = (transaction, parent, key, value) => {
         break
       default:
         if (value instanceof AbstractType) {
-          content = new ContentType(value)
+          if (value.createRef ?? parent.doc?.autoRef) {
+            content = new ContentDocRef(value)
+          } else {
+            content = new ContentType(value)
+          }
         } else {
           throw new Error('Unexpected content type')
         }

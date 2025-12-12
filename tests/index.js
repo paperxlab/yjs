@@ -8,9 +8,11 @@ import * as encoding from './encoding.tests.js'
 import * as undoredo from './undo-redo.tests.js'
 import * as compatibility from './compatibility.tests.js'
 import * as doc from './doc.tests.js'
+import * as docRefs from './doc-ref.tests.js'
 import * as snapshot from './snapshot.tests.js'
 import * as updates from './updates.tests.js'
 import * as relativePositions from './relativePositions.tests.js'
+import * as page from './page.tests.js'
 
 import { runTests } from 'lib0/testing'
 import { isBrowser, isNode } from 'lib0/environment'
@@ -25,7 +27,19 @@ if (isBrowser) {
  * @type {any}
  */
 const tests = {
-  doc, map, array, text, xml, encoding, undoredo, compatibility, snapshot, updates, relativePositions
+  doc,
+  map,
+  array,
+  text,
+  xml,
+  encoding,
+  undoredo,
+  compatibility,
+  docRefs,
+  snapshot,
+  updates,
+  relativePositions,
+  page
 }
 
 const run = async () => {
