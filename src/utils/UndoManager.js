@@ -21,21 +21,25 @@ import { ObservableV2 } from 'lib0/observable'
 export class StackItem {
   /**
    * @param {Map<Doc, { deletions: DeleteSet, insertions: DeleteSet }>} entries
-   * @param {Map<Doc, Item>|null} [detachedDocs]
+   * @param {Map<string, string|null>|null} [docParentGuids]
    */
-  constructor (entries, detachedDocs = null) {
+  constructor (entries, docParentGuids = null) {
     /**
      * @type {Map<Doc, { deletions: DeleteSet, insertions: DeleteSet }>}
      */
     this.entries = entries
     /**
-     * Snapshot of docs detached within the transaction that produced this StackItem.
-     * This is used to sort undo/redo operations deterministically even when docs are
-     * currently detached (doc._referrer is null).
+     * Snapshot of the refDoc graph at the time this StackItem was created.
      *
-     * @type {Map<Doc, Item>|null}
+     * Key: doc.guid, Value: parent doc guid (or null for root / unattached).
+     *
+     * We store this because redo/undo ordering depends on doc ancestry, but during
+     * undo some docs become detached (doc._referrer === null), which would otherwise
+     * make the ancestry information unavailable.
+     *
+     * @type {Map<string, string|null>|null}
      */
-    this.detachedDocs = detachedDocs
+    this.docParentGuids = docParentGuids
     /**
      * Use this to save and restore metadata like selection range
      */
@@ -44,30 +48,82 @@ export class StackItem {
 }
 
 /**
- * @param {Doc} docA
- * @param {Doc} docB
+ * @param {Map<Doc, { deletions: DeleteSet, insertions: DeleteSet }>} entries
+ * @param {Map<Doc, Item>|null} detachedDocs
+ * @return {Map<string, string|null>}
  */
-/**
- * @param {Doc} docA
- * @param {Doc} docB
- * @param {Map<Doc, Item>|null} [detachedDocs]
- */
-const isDocAncestor = (docA, docB, detachedDocs = null) => {
-  let n = docB
-  /** @type {Set<string>} */
-  const visitedGuids = new Set()
-  while (n) {
-    if (n === docA) return true
-    if (visitedGuids.has(n.guid)) break
-    visitedGuids.add(n.guid)
-    let referrer = n._referrer
-    if (!referrer && detachedDocs && detachedDocs.has(n)) {
-      referrer = /** @type {any} */ (detachedDocs.get(n))
-    }
-    if (!referrer) break
-    n = /** @type {AbstractType<any>} */ (referrer.parent).doc || /** @type {any} */ (null)
+const computeDocParentGuids = (entries, detachedDocs) => {
+  /** @type {Set<Doc>} */
+  const docs = new Set(entries.keys())
+  if (detachedDocs) {
+    detachedDocs.forEach((_item, doc) => docs.add(doc))
   }
-  return false
+
+  /** @type {Map<string, string|null>} */
+  const parentByGuid = new Map()
+  docs.forEach(doc => {
+    let referrer = doc._referrer
+    if (!referrer && detachedDocs && detachedDocs.has(doc)) {
+      referrer = /** @type {any} */ (detachedDocs.get(doc))
+    }
+    const parentDoc = referrer
+      ? (/** @type {AbstractType<any>} */ (referrer.parent).doc || null)
+      : null
+    parentByGuid.set(doc.guid, parentDoc ? parentDoc.guid : null)
+  })
+  return parentByGuid
+}
+
+/**
+ * @param {Map<string, string|null>|null} docParentGuids
+ * @param {Iterable<string>} docGuids
+ * @return {Map<string, number>}
+ */
+const computeDocGuidDepths = (docParentGuids, docGuids) => {
+  /** @type {Map<string, number>} */
+  const depths = new Map()
+  /**
+   * @param {string} guid
+   * @return {number}
+   */
+  const getDepth = guid => {
+    const cached = depths.get(guid)
+    if (cached !== undefined) return cached
+    if (!docParentGuids) {
+      depths.set(guid, 0)
+      return 0
+    }
+    /** @type {Set<string>} */
+    const visited = new Set()
+    let depth = 0
+    let nGuid = guid
+    while (true) {
+      if (visited.has(nGuid)) {
+        // cycle - treat as root
+        depth = 0
+        break
+      }
+      visited.add(nGuid)
+      const parentGuid = docParentGuids.get(nGuid) || null
+      if (!parentGuid) {
+        break
+      }
+      const parentCached = depths.get(parentGuid)
+      if (parentCached !== undefined) {
+        depth += parentCached + 1
+        break
+      }
+      depth++
+      nGuid = parentGuid
+    }
+    depths.set(guid, depth)
+    return depth
+  }
+
+  for (const guid of docGuids) {
+    getDepth(guid)
+  }
+  return depths
 }
 
 /**
@@ -106,23 +162,21 @@ const popStackItem = (undoManager, stack, eventType) => {
       const stackItem = /** @type {StackItem} */ (stack.pop())
       let performedChange = false
       const entries = Array.from(stackItem.entries.entries())
+      const depthByGuid = computeDocGuidDepths(stackItem.docParentGuids, entries.map(([d]) => d.guid))
       // Process entries based on their depth in the refDoc tree.
       // - Undo: apply children first (descendant -> ancestor), because a child doc might be detached when the parent ref is removed.
       // - Redo: apply parents first (ancestor -> descendant), because restoring a ContentDocRef first re-attaches the child doc
       //         (doc._referrer), which makes subsequent child-doc redo operations fall within scope.
       entries.sort((a, b) => {
         if (a[0] === b[0]) return 0
-        const detachedDocs = stackItem.detachedDocs
-        const aIsAncestorOfB = isDocAncestor(a[0], b[0], detachedDocs)
-        const bIsAncestorOfA = isDocAncestor(b[0], a[0], detachedDocs)
-        if (!aIsAncestorOfB && !bIsAncestorOfA) {
-          return 0
+        const aDepth = depthByGuid.get(a[0].guid) || 0
+        const bDepth = depthByGuid.get(b[0].guid) || 0
+        if (aDepth !== bDepth) {
+          // For undo, descendants first. For redo, ancestors first.
+          return eventType === 'redo' ? aDepth - bDepth : bDepth - aDepth
         }
-        // For undo, descendants first. For redo, ancestors first.
-        if (eventType === 'redo') {
-          return aIsAncestorOfB ? -1 : 1
-        }
-        return aIsAncestorOfB ? 1 : -1
+        // Deterministic tie-breaker for unrelated docs / siblings.
+        return a[0].guid < b[0].guid ? -1 : 1
       })
       entries.forEach(([doc, { insertions, deletions }]) => {
         transact(doc, transaction => {
@@ -213,8 +267,8 @@ const addToUndoStack = (undoManager, transactions, origin) => {
   const relevantTransactions = transactions.filter(transaction =>
     undoManager.captureTransaction(transaction) &&
     undoManager.scope.some(type =>
-      transaction.changedParentTypes.has(/** @type {AbstractType<any>} */ (type)) ||
-      (transaction.rootTransaction && transaction.rootTransaction.changedParentTypes.has(/** @type {AbstractType<any>} */ (type))) ||
+      transaction.changedParentTypes.has(/** @type {AbstractType<any>} */(type)) ||
+      (transaction.rootTransaction && transaction.rootTransaction.changedParentTypes.has(/** @type {AbstractType<any>} */(type))) ||
       type === transaction.doc
     ) &&
     (undoManager.trackedOrigins.has(transaction.origin) || (transaction.origin && undoManager.trackedOrigins.has(transaction.origin.constructor)))
@@ -252,6 +306,7 @@ const addToUndoStack = (undoManager, transactions, origin) => {
   const rootDetachedDocs = transactions.length > 0 && transactions[0].rootTransaction
     ? transactions[0].rootTransaction.detachedDocs
     : null
+  const docParentGuids = computeDocParentGuids(entries, rootDetachedDocs)
   if (undoManager.lastChange > 0 && now - undoManager.lastChange < undoManager.captureTimeout && stack.length > 0 && !undoing && !redoing) {
     // append change to last stack op
     const lastOp = stack[stack.length - 1]
@@ -264,19 +319,17 @@ const addToUndoStack = (undoManager, transactions, origin) => {
         lastOp.entries.set(doc, { deletions, insertions })
       }
     })
-    if (rootDetachedDocs) {
-      if (lastOp.detachedDocs == null) {
-        lastOp.detachedDocs = new Map(rootDetachedDocs)
-      } else {
-        const dd = /** @type {Map<Doc, Item>} */ (lastOp.detachedDocs)
-        rootDetachedDocs.forEach((item, doc) => {
-          dd.set(doc, item)
-        })
-      }
+    if (lastOp.docParentGuids == null) {
+      lastOp.docParentGuids = new Map(docParentGuids)
+    } else {
+      const parents = /** @type {Map<string, string|null>} */ (lastOp.docParentGuids)
+      docParentGuids.forEach((parentGuid, guid) => {
+        parents.set(guid, parentGuid)
+      })
     }
   } else {
     // create a new stack op
-    stack.push(new StackItem(entries, rootDetachedDocs ? new Map(rootDetachedDocs) : null))
+    stack.push(new StackItem(entries, docParentGuids))
     didAdd = true
   }
   if (!undoing && !redoing) {
